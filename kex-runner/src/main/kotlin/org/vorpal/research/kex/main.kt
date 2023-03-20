@@ -74,6 +74,7 @@ fun main(args: Array<String>) {
                     LaunchMode.Symbolic -> SymbolicLauncher(classPaths, targetName)
                     LaunchMode.Concolic -> ConcolicLauncher(classPaths, targetName)
                     LaunchMode.DefectChecker -> DefectCheckerLauncher(classPaths, targetName)
+                    LaunchMode.SymGraph -> SymGraphLauncher(classPaths, targetName)
                     else -> unreachable("")
                 }
             }
