@@ -92,6 +92,25 @@ fun generateFinalDescriptors(
     )
 }
 
+fun generateReturnValue(
+    method: Method,
+    ctx: ExecutionContext,
+    model: SMTModel,
+    state: PredicateState,
+    requiredTerms: Collection<Term>,
+//    returnTerm: Term // TODO: learn how to find return term without this argument
+): Map<Term, Descriptor> {
+    val generator = DescriptorGenerator(method, ctx, model, FinalDescriptorReanimator(method, model, ctx))
+    generator.apply(state)
+    return requiredTerms.associateWith {
+        if (it !in generator.memory) {
+            println("not found $it")
+            println(generator.memory)
+        }
+        generator.memory[it]!!
+    }
+}
+
 fun generateFinalTypeInfoMap(
     method: Method,
     ctx: ExecutionContext,
