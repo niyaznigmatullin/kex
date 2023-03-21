@@ -1,10 +1,7 @@
 package org.vorpal.research.kex.asm.analysis.symgraph
 
-import info.leadinglight.jdot.Graph
 import kotlinx.collections.immutable.*
-import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.yield
-import org.apache.commons.lang3.ObjectUtils.Null
 import org.vorpal.research.kex.ExecutionContext
 import org.vorpal.research.kex.asm.analysis.symbolic.*
 import org.vorpal.research.kex.descriptor.ConstantDescriptor
@@ -18,7 +15,6 @@ import org.vorpal.research.kex.parameters.Parameters
 import org.vorpal.research.kex.smt.AsyncChecker
 import org.vorpal.research.kex.smt.Result
 import org.vorpal.research.kex.state.predicate.state
-import org.vorpal.research.kex.state.term.NullTerm
 import org.vorpal.research.kex.state.term.Term
 import org.vorpal.research.kex.state.transformer.generateReturnValue
 import org.vorpal.research.kex.state.transformer.toTypeMap
@@ -40,18 +36,22 @@ class MethodAbstractlyInvocator(
     override val pathSelector: SymbolicPathSelector = DequePathSelector()
     override val callResolver: SymbolicCallResolver = DefaultCallResolver(ctx)
     override val invokeDynamicResolver: SymbolicInvokeDynamicResolver = DefaultCallResolver(ctx)
-    private val objectsToLookAfter = mutableSetOf<Term>()
+    private val objectsToLookAfter = mutableMapOf<Term, GraphObject>()
     private val invocationPaths = mutableListOf<CallResult>()
 
     suspend fun invokeMethod(
-        objects: Collection<GraphObject>,
+        heapState: HeapState,
         thisArg: GraphObject,
         arguments: List<GraphObject>
     ): Collection<CallResult> {
         val kfgValues = mutableMapOf<GraphObject, Value>()
         val terms = mutableMapOf<GraphObject, Term>()
         val clauses = mutableListOf<StateClause>()
+        if (thisArg == GraphObject.Null && !rootMethod.isStatic) {
+            return emptyList()
+        }
         val thisValue = values.getThis(rootMethod.klass)
+        val objects = heapState.objects
         objects.forEach {
             when (it) {
                 GraphObject.Null -> {
@@ -81,8 +81,8 @@ class MethodAbstractlyInvocator(
             for ((field, fieldDescriptor) in (obj.descriptor as ObjectDescriptor).fields) {
                 val (fieldName, fieldType) = field
                 if (fieldType is KexClass) {
-                    println("objects = $objects")
-                    println("fieldDescriptor = $fieldDescriptor, fieldName = $fieldName, fieldType = $fieldType")
+//                    println("objects = $objects")
+//                    println("fieldDescriptor = $fieldDescriptor, fieldName = $fieldName, fieldType = $fieldType")
                     val found = objects.find { it.descriptor == fieldDescriptor }!!
                     val kfgClassType = obj.descriptor.type.getKfgType(cm.type) as ClassType
                     val kfgField = kfgClassType.klass.getField(fieldName, fieldType.getKfgType(cm.type))
@@ -101,13 +101,10 @@ class MethodAbstractlyInvocator(
             }
         }
         objectsToLookAfter.clear()
-        objectsToLookAfter.addAll(persistentSetOf<Term>().builder().let {
-            it.addAll(terms.values)
-            it.remove(const(null))
-            it.build()
-        })
+        objectsToLookAfter.putAll(terms.filter { (obj, term) -> term != const(null) && obj in heapState.activeObjects }
+            .map { (obj, term) -> Pair(term, obj) })
         invocationPaths.clear()
-        println(clauses)
+//        println(clauses)
         val initialArguments = buildMap {
             val values = this@MethodAbstractlyInvocator.values
             if (!rootMethod.isStatic) {
@@ -162,52 +159,6 @@ class MethodAbstractlyInvocator(
         return generateReturnValue(method, ctx, result.model, checker.state, termsToGenerate)
     }
 
-//    suspend fun invokeMethod(method: Method) {
-//        val thisValue = values.getThis(method.klass)
-//        val initialArguments = buildMap {
-//            val values = this@SymbolicTraverser.values
-//            if (!method.isStatic) {
-//                this[thisValue] = `this`(method.klass.symbolicClass)
-//            }
-//            for ((index, type) in method.argTypes.withIndex()) {
-//                this[values.getArgument(index, method, type)] = arg(type.symbolicType, index)
-//            }
-//        }
-//        val (initialTypeInfo, initialNullCheckTerms, initialTypeCheckedTerms) = when {
-//            !method.isStatic -> {
-//                val thisTerm = initialArguments[thisValue]!!
-//                val thisType = method.klass.symbolicClass.getKfgType(types)
-//                Triple(
-//                    persistentMapOf(thisTerm to thisType),
-//                    persistentSetOf(thisTerm),
-//                    persistentMapOf(thisTerm to thisType)
-//                )
-//            }
-//
-//            else -> Triple(persistentMapOf(), persistentSetOf(), persistentMapOf())
-//        }
-//        pathSelector.add(
-//            TraverserState(
-//                symbolicState = persistentSymbolicState(),
-//                valueMap = initialArguments.toPersistentMap(),
-//                stackTrace = persistentListOf(),
-//                typeInfo = initialTypeInfo,
-//                blockPath = persistentListOf(),
-//                nullCheckedTerms = initialNullCheckTerms,
-//                boundCheckedTerms = persistentSetOf(),
-//                typeCheckedTerms = initialTypeCheckedTerms
-//            ),
-//            method.body.entry
-//        )
-//
-//        while (pathSelector.hasNext()) {
-//            val (currentState, currentBlock) = pathSelector.next()
-//            this.currentState = currentState
-//            traverseBlock(currentBlock)
-//            yield()
-//        }
-//    }
-
     override suspend fun traverseReturnInst(inst: ReturnInst) {
         val traverserState = currentState ?: return
         val stackTrace = traverserState.stackTrace
@@ -220,11 +171,11 @@ class MethodAbstractlyInvocator(
                     inst.hasReturnValue -> traverserState.mkTerm(inst.returnValue)
                     else -> null
                 }
-                println("objectsToLookAfter = $objectsToLookAfter")
+//                println("objectsToLookAfter = $objectsToLookAfter")
                 val objectDescriptors = checkAsyncAndGetReturn(rootMethod,
                     traverserState.symbolicState,
                     persistentSetOf<Term>().builder().let { set ->
-                        set.addAll(objectsToLookAfter)
+                        set.addAll(objectsToLookAfter.keys)
                         returnTerm?.let {
                             if (it.type is KexClass) {
                                 set.add(it)
@@ -232,7 +183,7 @@ class MethodAbstractlyInvocator(
                         }
                         set.build()
                     })
-                report_(inst, result, objectDescriptors.values, returnTerm?.let { objectDescriptors[it] })
+                report_(inst, result, objectDescriptors, returnTerm?.let { objectDescriptors[it] })
             }
             currentState = null
         } else {
@@ -243,14 +194,14 @@ class MethodAbstractlyInvocator(
     private fun report_(
         inst: Instruction,
         parameters: Parameters<Descriptor>,
-        objectDescriptors: Collection<Descriptor>,
+        objectDescriptors: Map<Term, Descriptor>,
         returnDescriptor: Descriptor?
     ) {
-        println("{inst} = $inst {parameters} = $parameters {objectDescriptors} = $objectDescriptors")
+//        println("{inst} = $inst {parameters} = $parameters {objectDescriptors} = $objectDescriptors")
         val allObjects = mutableSetOf<Descriptor>().also {
-            it.addAll(objectDescriptors)
+            it.addAll(objectDescriptors.values)
         }
-        val queue = queueOf(objectDescriptors)
+        val queue = queueOf(objectDescriptors.values)
         while (queue.isNotEmpty()) {
             val obj = queue.poll()!!
             if (obj == ConstantDescriptor.Null) {
@@ -266,6 +217,15 @@ class MethodAbstractlyInvocator(
                 }
             }
         }
-        invocationPaths.add(CallResult(allObjects.map { GraphObject(it) }, returnDescriptor?.let { GraphObject(it) }))
+        val activeObjects = buildSet {
+            addAll(objectDescriptors.values.map { GraphObject(it) })
+            returnDescriptor?.let { add(GraphObject(it)) }
+        }
+        invocationPaths.add(
+            CallResult(
+                allObjects.map { GraphObject(it) },
+                activeObjects,
+                returnDescriptor?.let { GraphObject(it) })
+        )
     }
 }
