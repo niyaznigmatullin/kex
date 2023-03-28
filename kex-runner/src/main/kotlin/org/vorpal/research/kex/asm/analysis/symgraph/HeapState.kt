@@ -5,7 +5,12 @@ import org.vorpal.research.kex.descriptor.ObjectDescriptor
 import org.vorpal.research.kex.ktype.KexClass
 import org.vorpal.research.kex.ktype.KexNull
 
-data class HeapState(val prevHeapState: HeapState?, val absCall: AbsCall?, val objects: Collection<GraphObject>, val activeObjects: Set<GraphObject>) {
+data class HeapState(
+    val prevHeapState: HeapState?,
+    val absCall: AbsCall?,
+    val objects: Collection<GraphObject>,
+    val activeObjects: Set<GraphObject>
+) {
 
     class PermutationGenerator(n: Int) {
         val p = IntArray(n) { it }
@@ -31,20 +36,106 @@ data class HeapState(val prevHeapState: HeapState?, val absCall: AbsCall?, val o
     }
 
     fun checkIsomorphism(other: HeapState): Boolean {
-        val a = objects.toList()
-        val b = other.objects.toList()
-        if (a.size != b.size) {
+        if (objects.size != other.objects.size || activeObjects.size != other.activeObjects.size) {
             return false
         }
-        val indexA = a.map { it.descriptor }.withIndex().associate { (i, x) -> Pair(x, i) }
-        val indexB = b.map { it.descriptor }.withIndex().associate { (i, x) -> Pair(x, i) }
-        val permutations = PermutationGenerator(a.size)
-        do {
-            if (checkMapping(a, b, other, indexA, indexB, permutations.p)) {
+        val result = checkIsomorphismImpl(
+            mapOf(),
+            mapOf(),
+            activeObjects.map { it.descriptor }.toSet(),
+            other.activeObjects.map { it.descriptor }.toSet()
+        )
+//        if (result) {
+//            println("this two are equal ===============")
+//            println(GraphBuilder.stateToString(this.hashCode(), this))
+//            println(GraphBuilder.stateToString(other.hashCode(), other))
+//            println("==================")
+//        }
+        return result
+//        val a = objects.toList()
+//        val b = other.objects.toList()
+//        if (a.size != b.size || activeObjects.size != other.activeObjects.size) {
+//            return false
+//        }
+//        val indexA = a.map { it.descriptor }.withIndex().associate { (i, x) -> Pair(x, i) }
+//        val indexB = b.map { it.descriptor }.withIndex().associate { (i, x) -> Pair(x, i) }
+//
+//        val permutations = PermutationGenerator(a.size)
+//        do {
+//            if (checkMapping(a, b, other, indexA, indexB, permutations.p)) {
+//                return true
+//            }
+//        } while (permutations.nextPermutation())
+//        return false
+    }
+
+    private fun checkIsomorphismImpl(
+        mapping: Map<Descriptor, Descriptor>,
+        reverseMapping: Map<Descriptor, Descriptor>,
+        activeDescriptors: Set<Descriptor>,
+        otherActiveDescriptors: Set<Descriptor>,
+    ): Boolean {
+        if (activeDescriptors.all { mapping.containsKey(it) }) {
+            return otherActiveDescriptors.all { reverseMapping.containsKey(it) }
+//            check(otherActiveDescriptors.all { reverseMapping.containsKey(it) })
+//            return true
+        }
+        val obj = activeDescriptors.first { !mapping.containsKey(it) }
+        for (mapTo in otherActiveDescriptors.filter { !reverseMapping.containsKey(it) }) {
+            val newMapping = mapping.toMutableMap()
+            val newReverseMapping = reverseMapping.toMutableMap()
+            if (!tryAddMapping(newMapping, newReverseMapping, obj, mapTo, activeDescriptors, otherActiveDescriptors)) {
+                continue
+            }
+            if (checkIsomorphismImpl(newMapping, newReverseMapping, activeDescriptors, otherActiveDescriptors)) {
                 return true
             }
-        } while (permutations.nextPermutation())
+        }
         return false
+    }
+
+    private fun tryAddMapping(
+        mapping: MutableMap<Descriptor, Descriptor>,
+        reverseMapping: MutableMap<Descriptor, Descriptor>,
+        obj: Descriptor,
+        mapTo: Descriptor,
+        activeDescriptors: Set<Descriptor>,
+        otherActiveDescriptors: Set<Descriptor>,
+    ): Boolean {
+        if (obj.type != mapTo.type || (obj in activeDescriptors) != (mapTo in otherActiveDescriptors)) {
+            return false
+        }
+        mapping[obj] = mapTo
+        reverseMapping[mapTo] = obj
+        if (obj.type is KexClass) {
+            obj as ObjectDescriptor
+            mapTo as ObjectDescriptor
+            for ((field, fieldDescriptor) in obj.fields) {
+                val type = field.second
+                if (type !is KexClass && type !is KexNull) {
+                    continue
+                }
+                val otherFieldDescriptor = mapTo.fields.getValue(field)
+                val map1 = mapping[fieldDescriptor]
+                val map2 = reverseMapping[otherFieldDescriptor]
+                if (map1 == null && map2 == null) {
+                    if (!tryAddMapping(
+                            mapping,
+                            reverseMapping,
+                            fieldDescriptor,
+                            otherFieldDescriptor,
+                            activeDescriptors,
+                            otherActiveDescriptors
+                        )
+                    ) {
+                        return false
+                    }
+                } else if (map1 !== otherFieldDescriptor || map2 !== fieldDescriptor) {
+                    return false
+                }
+            }
+        }
+        return true
     }
 
     private fun checkMapping(
