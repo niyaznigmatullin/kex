@@ -1,11 +1,16 @@
 package org.vorpal.research.kex.asm.analysis.symgraph
 
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.runBlocking
 import org.vorpal.research.kex.ExecutionContext
 import org.vorpal.research.kex.descriptor.ConstantDescriptor
 import org.vorpal.research.kex.descriptor.ObjectDescriptor
 import org.vorpal.research.kex.ktype.KexClass
 import org.vorpal.research.kex.ktype.KexNull
 import org.vorpal.research.kex.ktype.kexType
+import org.vorpal.research.kex.util.newFixedThreadPoolContextWithMDC
 import org.vorpal.research.kfg.ir.Class
 import org.vorpal.research.kfg.ir.Method
 import org.vorpal.research.kfg.type.ClassType
@@ -15,27 +20,29 @@ import kotlin.system.measureTimeMillis
 
 class GraphBuilder(val ctx: ExecutionContext, private val klass: Class) {
     private val publicMethods = klass.allMethods.filter { it.isPublic }
+    private val coroutineContext = newFixedThreadPoolContextWithMDC(5, "abstract-caller")
+    private var calls = 0
 
     val types: TypeFactory
         get() = ctx.types
 
-    private fun exploreStates(oldStates: MutableSet<HeapState>): MutableSet<HeapState> {
+    private suspend fun exploreStates(oldStates: MutableSet<HeapState>): MutableSet<HeapState> = coroutineScope {
         val newStates = mutableSetOf<HeapState>()
         while (oldStates.isNotEmpty()) {
             val state = oldStates.iterator().next()
             oldStates.remove(state)
-            for (m in publicMethods) {
-                for (c in getAbstractCalls(state, m)) {
-                    for (p in c.call(ctx, state)) {
-                        val newState = HeapState(state, c, p.objects, p.activeObjects)
-                        if (!newStates.any { it.checkIsomorphism(newState) }) {
-                            newStates.add(newState)
-                        }
-                    }
+            val allCalls = publicMethods.flatMap { m -> getAbstractCalls(state, m) }
+            calls += allCalls.size
+            val callResults =
+                allCalls.map { c -> async { c.call(ctx, state).map { Pair(c, it) } } }.awaitAll().flatten()
+            for ((c, p) in callResults) {
+                val newState = HeapState(state, c, p.objects, p.activeObjects)
+                if (!newStates.any { it.checkIsomorphism(newState) }) {
+                    newStates.add(newState)
                 }
             }
         }
-        return newStates
+        newStates
     }
 
     private inner class AbsCallGenerator(val state: HeapState, val m: Method) {
@@ -81,67 +88,75 @@ class GraphBuilder(val ctx: ExecutionContext, private val klass: Class) {
     }
 
     fun build(maxL: Int) {
-        val time = measureTimeMillis {
-            var oldStates = mutableSetOf(HeapState(null, null, listOf(GraphObject.Null), setOf(GraphObject.Null)))
-            val allStates = mutableListOf<HeapState>()
-            for (l in 0 until maxL) {
-                oldStates = exploreStates(oldStates)
-                if (oldStates.isEmpty()) {
-                    break
-                }
-                println("oldStates iteration $l: ${oldStates.size}")
-                if (l == 0) {
-                    println(oldStates)
-                }
-                for (state in oldStates) {
-                    if (!allStates.any { otherState ->
-                            otherState.checkIsomorphism(state)
-                        }) {
-                        allStates.add(state)
+        runBlocking(coroutineContext) {
+            val time = measureTimeMillis {
+                var oldStates = mutableSetOf(HeapState(null, null, listOf(GraphObject.Null), setOf(GraphObject.Null)))
+                val allStates = mutableListOf<HeapState>()
+                for (l in 0 until maxL) {
+                    oldStates = exploreStates(oldStates)
+                    if (oldStates.isEmpty()) {
+                        break
+                    }
+                    println("oldStates iteration $l: ${oldStates.size}")
+                    if (l == 0) {
+                        println(oldStates)
+                    }
+                    for (state in oldStates) {
+                        if (!allStates.any { otherState ->
+                                otherState.checkIsomorphism(state)
+                            }) {
+                            allStates.add(state)
+                        }
                     }
                 }
+                println("the number of states = ${allStates.size}")
+                println(allStates.withIndex().joinToString(separator = "\n") { (stateIndex, state) ->
+                    stateToString(stateIndex, state)
+                })
+                println("Abstract calls: ${calls}")
             }
-            println("the number of states = ${allStates.size}")
-            allStates.withIndex().forEach { (stateIndex, state) ->
-                val stateRepr = buildString {
-                    appendLine("[[State #$stateIndex]]")
-                    val callSequence = mutableListOf<String>()
-                    var c: HeapState? = state
-                    while (c?.absCall != null) {
-                        callSequence.add(c.absCall!!.method.toString())
-                        c = c.prevHeapState
-                    }
-                    appendLine(callSequence.reversed())
-                    appendLine("Nodes = ${state.objects.size}")
-                    val stateToIndex = state.objects.map { it.descriptor }.withIndex().associate { (i, v) ->
-                        val id = if (v == ConstantDescriptor.Null) {
-                            "null"
-                        } else if (state.activeObjects.any { it.descriptor == v }) {
-                            "a$i"
-                        } else {
-                            "$i"
-                        }
-                        Pair(v, id)
-                    }
-                    for (obj in state.objects) {
-                        val d = obj.descriptor
-                        if (d.type !is KexClass) {
-                            continue
-                        }
-                        d as ObjectDescriptor
-                        for ((field, desc) in d.fields) {
-                            if (desc.type is KexClass || desc.type is KexNull) {
-                                val from = stateToIndex.getValue(obj.descriptor)
-                                val to = stateToIndex.getValue(desc)
-                                appendLine("$from -> $to")
-                            }
-                        }
-                    }
-                }
-                println(stateRepr)
-            }
-            println("Abstract calls: ${AbsCall.calls}")
+            println("Took ${time}ms")
         }
-        println("Took ${time}ms")
+    }
+
+    companion object {
+        fun stateToString(stateIndex: Int, state: HeapState): String {
+            val stateRepr = buildString {
+                appendLine("[[State #$stateIndex]]")
+                val callSequence = mutableListOf<String>()
+                var c: HeapState? = state
+                while (c?.absCall != null) {
+                    callSequence.add(c.absCall!!.method.toString())
+                    c = c.prevHeapState
+                }
+                appendLine(callSequence.reversed())
+                appendLine("Nodes = ${state.objects.size}, active = ${state.activeObjects.size}")
+                val stateToIndex = state.objects.map { it.descriptor }.withIndex().associate { (i, v) ->
+                    val id = if (v == ConstantDescriptor.Null) {
+                        "null"
+                    } else if (state.activeObjects.any { it.descriptor == v }) {
+                        "a$i"
+                    } else {
+                        "$i"
+                    }
+                    Pair(v, id)
+                }
+                for (obj in state.objects) {
+                    val d = obj.descriptor
+                    if (d.type !is KexClass) {
+                        continue
+                    }
+                    d as ObjectDescriptor
+                    for ((field, desc) in d.fields) {
+                        if (desc.type is KexClass || desc.type is KexNull) {
+                            val from = stateToIndex.getValue(obj.descriptor)
+                            val to = stateToIndex.getValue(desc)
+                            appendLine("$from -> $to")
+                        }
+                    }
+                }
+            }
+            return stateRepr
+        }
     }
 }

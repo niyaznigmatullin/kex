@@ -44,32 +44,32 @@ class MethodAbstractlyInvocator(
         thisArg: GraphObject,
         arguments: List<GraphObject>
     ): Collection<CallResult> {
-        val kfgValues = mutableMapOf<GraphObject, Value>()
+//        val kfgValues = mutableMapOf<GraphObject, Value>()
+        val firstInstruction = rootMethod.body.entry.instructions.first()
         val terms = mutableMapOf<GraphObject, Term>()
         val clauses = mutableListOf<StateClause>()
         if (thisArg == GraphObject.Null && !rootMethod.isStatic) {
             return emptyList()
         }
-        val thisValue = values.getThis(rootMethod.klass)
         val objects = heapState.objects
         objects.forEach {
             when (it) {
                 GraphObject.Null -> {
-                    kfgValues[it] = NullConstant(NullType)
+//                    kfgValues[it] = NullConstant(NullType)
                     terms[it] = const(null)
                 }
 
                 thisArg -> {
                     assert(!rootMethod.isStatic)
-                    kfgValues[it] = thisValue
+//                    kfgValues[it] = thisValue
                     terms[it] = `this`(rootMethod.klass.symbolicClass)
                 }
 
                 else -> {
-                    val newInst = cm.instruction.getNew(EmptyUsageContext, it.descriptor.type.getKfgType(cm.type))
+//                    val newInst = cm.instruction.getNew(EmptyUsageContext, it.descriptor.type.getKfgType(cm.type))
                     val newTerm = generate(it.descriptor.type)
-                    clauses.add(StateClause(newInst, state { newTerm.new() }))
-                    kfgValues[it] = newInst
+                    clauses.add(StateClause(firstInstruction, state { newTerm.new() }))
+//                    kfgValues[it] = newInst
                     terms[it] = newTerm
                 }
             }
@@ -86,15 +86,15 @@ class MethodAbstractlyInvocator(
                     val found = objects.find { it.descriptor == fieldDescriptor }!!
                     val kfgClassType = obj.descriptor.type.getKfgType(cm.type) as ClassType
                     val kfgField = kfgClassType.klass.getField(fieldName, fieldType.getKfgType(cm.type))
-                    val fieldStoreInst = cm.instruction.getFieldStore(
-                        EmptyUsageContext,
-                        kfgValues.getValue(obj),
-                        kfgField,
-                        kfgValues.getValue(found),
-                    )
+//                    val fieldStoreInst = cm.instruction.getFieldStore(
+//                        EmptyUsageContext,
+//                        kfgValues.getValue(obj),
+//                        kfgField,
+//                        kfgValues.getValue(found),
+//                    )
                     val objectTerm = terms.getValue(obj)
                     val valueTerm = terms.getValue(found)
-                    val clause = StateClause(fieldStoreInst,
+                    val clause = StateClause(firstInstruction,
                         state { objectTerm.field(obj.descriptor.type, fieldName).store(valueTerm) })
                     clauses.add(clause)
                 }
@@ -105,13 +105,20 @@ class MethodAbstractlyInvocator(
             .map { (obj, term) -> Pair(term, obj) })
         invocationPaths.clear()
 //        println(clauses)
+        val thisValue = values.getThis(rootMethod.klass)
         val initialArguments = buildMap {
             val values = this@MethodAbstractlyInvocator.values
             if (!rootMethod.isStatic) {
                 this[thisValue] = terms.getValue(thisArg)
             }
             for ((index, type) in rootMethod.argTypes.withIndex()) {
-                this[values.getArgument(index, rootMethod, type)] = arg(type.symbolicType, index)
+                val argTerm = arg(type.symbolicType, index)
+                this[values.getArgument(index, rootMethod, type)] = argTerm
+                if (type.symbolicType is KexClass) {
+                    clauses.add(StateClause(firstInstruction, state {
+                        argTerm equality terms.getValue(arguments[index])
+                    }))
+                }
             }
         }
         val initialTypeInfo = terms.map { (obj, term) ->
@@ -156,6 +163,13 @@ class MethodAbstractlyInvocator(
             .mapValues { it.value.rtMapped }.toTypeMap()
         val result = checker.prepareAndCheck(method, clauses + query, concreteTypeInfo)
         check(result is Result.SatResult)
+        termsToGenerate.forEach { term ->
+            val kfgType = term.type.getKfgType(types)
+            for (field in (kfgType as ClassType).klass.fields) {
+                val newTerm = generate(field.type.symbolicType)
+                val loadTerm = term.field(field.type.symbolicType, field.name).load()
+            }
+        }
         return generateReturnValue(method, ctx, result.model, checker.state, termsToGenerate)
     }
 
