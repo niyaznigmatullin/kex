@@ -14,15 +14,13 @@ import org.vorpal.research.kex.ktype.KexRtManager.rtMapped
 import org.vorpal.research.kex.parameters.Parameters
 import org.vorpal.research.kex.smt.AsyncChecker
 import org.vorpal.research.kex.smt.Result
+import org.vorpal.research.kex.state.predicate.path
 import org.vorpal.research.kex.state.predicate.state
 import org.vorpal.research.kex.state.term.Term
 import org.vorpal.research.kex.state.transformer.generateReturnValue
 import org.vorpal.research.kex.state.transformer.toTypeMap
 import org.vorpal.research.kex.trace.symbolic.*
 import org.vorpal.research.kfg.ir.Method
-import org.vorpal.research.kfg.ir.value.EmptyUsageContext
-import org.vorpal.research.kfg.ir.value.NullConstant
-import org.vorpal.research.kfg.ir.value.Value
 import org.vorpal.research.kfg.ir.value.instruction.Instruction
 import org.vorpal.research.kfg.ir.value.instruction.ReturnInst
 import org.vorpal.research.kfg.type.ClassType
@@ -44,10 +42,10 @@ class MethodAbstractlyInvocator(
         thisArg: GraphObject,
         arguments: List<GraphObject>
     ): Collection<CallResult> {
-//        val kfgValues = mutableMapOf<GraphObject, Value>()
         val firstInstruction = rootMethod.body.entry.instructions.first()
         val terms = mutableMapOf<GraphObject, Term>()
-        val clauses = mutableListOf<StateClause>()
+        val stateClauses = mutableListOf<StateClause>()
+        val pathClauses = mutableListOf<PathClause>()
         if (thisArg == GraphObject.Null && !rootMethod.isStatic) {
             return emptyList()
         }
@@ -55,48 +53,49 @@ class MethodAbstractlyInvocator(
         objects.forEach {
             when (it) {
                 GraphObject.Null -> {
-//                    kfgValues[it] = NullConstant(NullType)
                     terms[it] = const(null)
                 }
 
-                thisArg -> {
-                    assert(!rootMethod.isStatic)
-//                    kfgValues[it] = thisValue
-                    terms[it] = `this`(rootMethod.klass.symbolicClass)
-                }
+//                thisArg -> {
+//                    assert(!rootMethod.isStatic)
+////                    kfgValues[it] = thisValue
+//                    val thisTerm = `this`(rootMethod.klass.symbolicClass)
+//                    terms[it] = thisTerm
+//                    pathClauses.add(
+//                        PathClause(
+//                            PathClauseType.NULL_CHECK,
+//                            firstInstruction,
+//                            path { (thisTerm eq null) equality false })
+//                    )
+//                }
 
                 else -> {
-//                    val newInst = cm.instruction.getNew(EmptyUsageContext, it.descriptor.type.getKfgType(cm.type))
                     val newTerm = generate(it.descriptor.type)
-                    clauses.add(StateClause(firstInstruction, state { newTerm.new() }))
-//                    kfgValues[it] = newInst
+                    if (thisArg != it && !arguments.contains(it)) {
+                        stateClauses.add(StateClause(firstInstruction, state { newTerm.new() }))
+                    }
+                    pathClauses.add(
+                        PathClause(
+                            PathClauseType.NULL_CHECK,
+                            firstInstruction,
+                            path { (newTerm eq null) equality false })
+                    )
                     terms[it] = newTerm
                 }
             }
         }
-        for (obj in objects) {
-            if (obj == GraphObject.Null) {
-                continue
-            }
+        for (obj in objects.filter { it != GraphObject.Null }) {
             for ((field, fieldDescriptor) in (obj.descriptor as ObjectDescriptor).fields) {
                 val (fieldName, fieldType) = field
                 if (fieldType is KexClass) {
 //                    println("objects = $objects")
 //                    println("fieldDescriptor = $fieldDescriptor, fieldName = $fieldName, fieldType = $fieldType")
                     val found = objects.find { it.descriptor == fieldDescriptor }!!
-                    val kfgClassType = obj.descriptor.type.getKfgType(cm.type) as ClassType
-                    val kfgField = kfgClassType.klass.getField(fieldName, fieldType.getKfgType(cm.type))
-//                    val fieldStoreInst = cm.instruction.getFieldStore(
-//                        EmptyUsageContext,
-//                        kfgValues.getValue(obj),
-//                        kfgField,
-//                        kfgValues.getValue(found),
-//                    )
                     val objectTerm = terms.getValue(obj)
                     val valueTerm = terms.getValue(found)
                     val clause = StateClause(firstInstruction,
                         state { objectTerm.field(obj.descriptor.type, fieldName).store(valueTerm) })
-                    clauses.add(clause)
+                    stateClauses.add(clause)
                 }
             }
         }
@@ -109,13 +108,16 @@ class MethodAbstractlyInvocator(
         val initialArguments = buildMap {
             val values = this@MethodAbstractlyInvocator.values
             if (!rootMethod.isStatic) {
-                this[thisValue] = terms.getValue(thisArg)
+                val thisTerm = `this`(rootMethod.klass.symbolicClass)
+                this[thisValue] = thisTerm
+                stateClauses.add(StateClause(firstInstruction, state { terms.getValue(thisArg) equality thisTerm }))
+//                this[thisValue] = terms.getValue(thisArg)
             }
             for ((index, type) in rootMethod.argTypes.withIndex()) {
                 val argTerm = arg(type.symbolicType, index)
                 this[values.getArgument(index, rootMethod, type)] = argTerm
                 if (type.symbolicType is KexClass) {
-                    clauses.add(StateClause(firstInstruction, state {
+                    stateClauses.add(StateClause(firstInstruction, state {
                         argTerm equality terms.getValue(arguments[index])
                     }))
                 }
@@ -132,7 +134,10 @@ class MethodAbstractlyInvocator(
         val initialTypeCheckedTerms = initialTypeInfo
         pathSelector.add(
             TraverserState(
-                symbolicState = persistentSymbolicState(state = PersistentClauseState(clauses.toPersistentList())),
+                symbolicState = persistentSymbolicState(
+                    state = stateClauses.toPersistentClauseState(),
+                    path = pathClauses.toPersistentPathCondition(),
+                ),
                 valueMap = initialArguments.toPersistentMap(),
                 stackTrace = persistentListOf(),
                 typeInfo = initialTypeInfo,
@@ -179,6 +184,7 @@ class MethodAbstractlyInvocator(
         val stackTraceElement = stackTrace.lastOrNull()
         val receiver = stackTraceElement?.instruction
         if (receiver == null) {
+//            println("Return Instruction for method: $rootMethod")
             val result = check(rootMethod, traverserState.symbolicState)
             if (result != null) {
                 val returnTerm = when {
