@@ -4,6 +4,7 @@ import org.vorpal.research.kex.ExecutionContext
 import org.vorpal.research.kex.descriptor.ConstantDescriptor
 import org.vorpal.research.kex.descriptor.Descriptor
 import org.vorpal.research.kex.descriptor.descriptor
+import org.vorpal.research.kex.ktype.KexClass
 import org.vorpal.research.kex.ktype.KexPointer
 import org.vorpal.research.kex.ktype.KexReference
 import org.vorpal.research.kex.ktype.KexRtManager.rtMapped
@@ -98,7 +99,6 @@ fun generateReturnValue(
     model: SMTModel,
     state: PredicateState,
     requiredTerms: Collection<Term>,
-//    returnTerm: Term // TODO: learn how to find return term without this argument
 ): Map<Term, Descriptor> {
     val generator = DescriptorGenerator(method, ctx, model, FinalDescriptorReanimator(method, model, ctx))
     generator.apply(state)
@@ -109,6 +109,17 @@ fun generateReturnValue(
         }
         generator.memory[it]!!
     }
+}
+
+fun generateFinalObjectsState(
+    method: Method,
+    ctx: ExecutionContext,
+    model: SMTModel,
+    state: PredicateState,
+): Map<Term, Descriptor> {
+    val generator = DescriptorGenerator(method, ctx, model, FinalDescriptorReanimator(method, model, ctx))
+    generator.apply(state)
+    return generator.memory.filterKeys { it.type is KexClass }
 }
 
 fun generateFinalTypeInfoMap(

@@ -1,13 +1,14 @@
 package org.vorpal.research.kex.asm.analysis.symgraph2
 
 import org.vorpal.research.kex.ktype.KexClass
+import org.vorpal.research.kex.state.PredicateState
 
 data class HeapState(
     val prevHeapState: HeapState?,
     val absCall: AbsCall?,
     val objects: Collection<GraphObject>,
     val activeObjects: Set<GraphObject>,
-//    val symbolicState: SymbolicState,
+    val predicateState: PredicateState,
 ) {
 
     class PermutationGenerator(n: Int) {

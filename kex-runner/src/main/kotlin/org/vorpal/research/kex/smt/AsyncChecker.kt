@@ -107,9 +107,18 @@ class AsyncChecker(
         state: PredicateState,
         typeMap: TypeInfoMap = emptyMap<Term, KexType>().toTypeMap()
     ): Result {
+        return prepareAndCheckWithState(method, state, typeMap).second
+    }
+
+    suspend fun prepareAndCheckWithState(
+        method: Method,
+        state: PredicateState,
+        typeMap: TypeInfoMap = emptyMap<Term, KexType>().toTypeMap()
+    ): Pair<PredicateState, Result> {
         val preparedState = prepareState(method, state, typeMap)
         log.debug { "Prepared state: $preparedState" }
-        return check(preparedState)
+        val result = check(preparedState)
+        return preparedState to result
     }
 
     suspend fun check(ps: PredicateState, qry: PredicateState = emptyState()): Result {

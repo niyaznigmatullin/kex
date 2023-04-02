@@ -7,6 +7,8 @@ import kotlinx.coroutines.runBlocking
 import org.vorpal.research.kex.ExecutionContext
 import org.vorpal.research.kex.ktype.KexClass
 import org.vorpal.research.kex.ktype.kexType
+import org.vorpal.research.kex.state.PredicateState
+import org.vorpal.research.kex.state.emptyState
 import org.vorpal.research.kex.util.newFixedThreadPoolContextWithMDC
 import org.vorpal.research.kfg.ir.Class
 import org.vorpal.research.kfg.ir.Method
@@ -33,7 +35,7 @@ class GraphBuilder(val ctx: ExecutionContext, private val klass: Class) {
             val callResults =
                 allCalls.map { c -> async { c.call(ctx, state).map { Pair(c, it) } } }.awaitAll().flatten()
             for ((c, p) in callResults) {
-                val newState = HeapState(state, c, p.objects, p.activeObjects)
+                val newState = HeapState(state, c, p.objects, p.activeObjects, p.predicateState)
                 if (!newStates.any { it.checkIsomorphism(newState) }) {
                     newStates.add(newState)
                 }
@@ -87,7 +89,7 @@ class GraphBuilder(val ctx: ExecutionContext, private val klass: Class) {
     fun build(maxL: Int) {
         runBlocking(coroutineContext) {
             val time = measureTimeMillis {
-                var oldStates = mutableSetOf(HeapState(null, null, listOf(GraphObject.Null), setOf(GraphObject.Null)))
+                var oldStates = mutableSetOf(HeapState(null, null, listOf(GraphObject.Null), setOf(GraphObject.Null), emptyState()))
                 val allStates = mutableListOf<HeapState>()
                 for (l in 0 until maxL) {
                     oldStates = exploreStates(oldStates)

@@ -5,9 +5,8 @@ import org.vorpal.research.kex.ktype.KexType
 import org.vorpal.research.kex.state.term.Term
 
 class GraphObject(val type: KexType) {
-
-    //    val primitiveFields: Map<Pair<String, KexType>, Term>,
     var objectFields = emptyMap<Pair<String, KexType>, GraphObject>()
+    var primitiveFields = emptyMap<Pair<String, KexType>, Term>()
 
     companion object {
         val Null = GraphObject(KexNull())
