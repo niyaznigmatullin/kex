@@ -35,7 +35,17 @@ class GraphBuilder(val ctx: ExecutionContext, private val klass: Class) {
             val callResults =
                 allCalls.map { c -> async { c.call(ctx, state).map { Pair(c, it) } } }.awaitAll().flatten()
             for ((c, p) in callResults) {
-                val newState = HeapState(state, c, p.objects, p.activeObjects, p.predicateState)
+                val newState = HeapState(
+                    state,
+                    c,
+                    p.objects,
+                    p.activeObjects,
+                    state.predicateState + p.predicateState,
+                    buildList {
+                        addAll(state.freeTerms)
+                        addAll(p.freeTerms)
+                    }
+                )
                 if (!newStates.any { it.checkIsomorphism(newState) }) {
                     newStates.add(newState)
                 }
@@ -89,7 +99,16 @@ class GraphBuilder(val ctx: ExecutionContext, private val klass: Class) {
     fun build(maxL: Int) {
         runBlocking(coroutineContext) {
             val time = measureTimeMillis {
-                var oldStates = mutableSetOf(HeapState(null, null, listOf(GraphObject.Null), setOf(GraphObject.Null), emptyState()))
+                var oldStates = mutableSetOf(
+                    HeapState(
+                        null,
+                        null,
+                        listOf(GraphObject.Null),
+                        setOf(GraphObject.Null),
+                        emptyState(),
+                        emptyList()
+                    )
+                )
                 val allStates = mutableListOf<HeapState>()
                 for (l in 0 until maxL) {
                     oldStates = exploreStates(oldStates)
@@ -150,6 +169,15 @@ class GraphBuilder(val ctx: ExecutionContext, private val klass: Class) {
                         appendLine("$from -> $to")
                     }
                 }
+                for (obj in state.objects) {
+                    val objName = stateToIndex.getValue(obj)
+                    val objFields = obj.primitiveFields.map { (field, value) ->
+                        ".${field.first} = $value"
+                    }.joinToString(", ")
+                    appendLine("  Object $objName { $objFields }")
+                }
+                appendLine("With state: \n ${state.predicateState}")
+                appendLine("Free terms: ${state.freeTerms}")
             }
             return stateRepr
         }

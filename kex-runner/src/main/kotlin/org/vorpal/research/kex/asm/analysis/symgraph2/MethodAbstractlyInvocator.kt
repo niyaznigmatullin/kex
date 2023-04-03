@@ -12,14 +12,14 @@ import org.vorpal.research.kex.ktype.KexNull
 import org.vorpal.research.kex.ktype.KexRtManager.isJavaRt
 import org.vorpal.research.kex.ktype.KexRtManager.rtMapped
 import org.vorpal.research.kex.ktype.KexType
+import org.vorpal.research.kex.ktype.kexType
 import org.vorpal.research.kex.smt.AsyncChecker
 import org.vorpal.research.kex.smt.Result
 import org.vorpal.research.kex.state.PredicateState
-import org.vorpal.research.kex.state.predicate.NewPredicate
-import org.vorpal.research.kex.state.predicate.Predicate
-import org.vorpal.research.kex.state.predicate.path
-import org.vorpal.research.kex.state.predicate.state
+import org.vorpal.research.kex.state.predicate.*
+import org.vorpal.research.kex.state.term.ArgumentTerm
 import org.vorpal.research.kex.state.term.Term
+import org.vorpal.research.kex.state.term.ValueTerm
 import org.vorpal.research.kex.state.transformer.*
 import org.vorpal.research.kex.trace.symbolic.*
 import org.vorpal.research.kfg.ir.Method
@@ -211,12 +211,6 @@ class MethodAbstractlyInvocator(
 //        println("{inst} = $inst {parameters} = $parameters {objectDescriptors} = $objectDescriptors")
         val activeDescriptors = getActiveDescriptors(objectDescriptors, returnDescriptor)
         val allDescriptors = findAllReachableDescriptors(activeDescriptors)
-        val mapping = allDescriptors.associateWith {
-            when (it) {
-                ConstantDescriptor.Null -> GraphObject.Null
-                else -> GraphObject(it.type)
-            }
-        }
         val newObjects = collectNewObjectTerms(predicateState)
         val representerObjects = buildSet {
             addAll(allObjectsBefore.keys)
@@ -228,9 +222,25 @@ class MethodAbstractlyInvocator(
         val mapToRepresenter = objectDescriptors.filterValues { it.type !is KexNull }.mapValues { (_, descriptor) ->
             representersByDescriptor.getValue(descriptor)
         }
+        var updatedState = predicateState
 //        println("before : $predicateState")
-        val (fields, updatedState) = extractValues(termsOfFieldsBefore, mapToRepresenter, predicateState)
+        val newFreeTerms = convertArgsToFreeTerms(updatedState).let { (terms, state) ->
+            updatedState = state
+            terms
+        }
+        val fields = extractValues(termsOfFieldsBefore, mapToRepresenter, updatedState).let { (fields, state) ->
+            updatedState = state
+            fields
+        }
+        updatedState = removeNonInterestingPredicates(updatedState)
 //        println("after : $updatedState")
+
+        val mapping = allDescriptors.associateWith {
+            when (it) {
+                ConstantDescriptor.Null -> GraphObject.Null
+                else -> GraphObject(it.type)
+            }
+        }
         mapping.filter { it.key != ConstantDescriptor.Null }.forEach { (descriptor, obj) ->
             descriptor as ObjectDescriptor
             val representer = representersByDescriptor.getValue(descriptor)
@@ -260,23 +270,46 @@ class MethodAbstractlyInvocator(
                 activeObjects,
                 returnDescriptor?.let { mapping.getValue(it) },
                 updatedState,
+                newFreeTerms,
             )
         )
     }
-//
-//    private fun removeNonInterestingPredicates(ps: PredicateState, interestingTerms: Set<Term>): PredicateState {
-//        val transformer = LeaveOnlyInterestingPredicates(interestingTerms)
-//        return transformer.apply(ps)
-//    }
-//
-//    class LeaveOnlyInterestingPredicates(val interestingTerms: Set<Term>): Transformer<LeaveOnlyInterestingPredicates> {
-//        override fun transformBase(predicate: Predicate): Predicate {
-//            if (TermCollector.getFullTermSet(predicate).any { interestingTerms.contains(it) }) {
-//                return predicate
-//            }
-//            return nothing()
-//        }
-//    }
+
+    private fun convertArgsToFreeTerms(state: PredicateState): Pair<Collection<Term>, PredicateState> {
+        val arguments = rootMethod.argTypes.withIndex()
+            .filter { it.value.kexType !is KexClass }
+            .associate { it.index to generate(it.value.kexType) }
+        val replacer = ArgumentReplacer(arguments)
+        val newState = replacer.apply(state)
+        return arguments.values to newState
+    }
+
+    class ArgumentReplacer(private val mapping: Map<Int, Term>) : Transformer<ArgumentReplacer> {
+        override fun transformArgument(term: ArgumentTerm): Term {
+            return mapping[term.index] ?: term
+        }
+    }
+
+
+    private fun removeNonInterestingPredicates(ps: PredicateState): PredicateState {
+        val transformer = RemovePredicates()
+        return transformer.apply(ps)
+    }
+
+    class RemovePredicates : Transformer<RemovePredicates> {
+        override fun transformBase(predicate: Predicate): Predicate {
+            if (TermCollector.getFullTermSet(predicate).any {
+                it.type is KexClass
+            }) {
+                return nothing()
+            }
+            return super.transformBase(predicate)
+        }
+
+        override fun transformNew(predicate: NewPredicate): Predicate {
+            return nothing()
+        }
+    }
 
     private fun collectNewObjectTerms(predicateState: PredicateState): Set<Term> {
         val collector = PredicateTermCollector { it is NewPredicate }
@@ -292,11 +325,9 @@ class MethodAbstractlyInvocator(
         returnDescriptor?.let<Descriptor, Unit> { add(it) }
     }
 
-    private fun findAllReachableDescriptors(activeDescriptors: Set<Descriptor>): Set<Descriptor> {
-        val allDescriptors = mutableSetOf<Descriptor>().also {
-            it.addAll(activeDescriptors)
-        }
-        val queue = queueOf(activeDescriptors)
+    private fun findAllReachableDescriptors(from: Set<Descriptor>): Set<Descriptor> {
+        val allDescriptors = from.toMutableSet()
+        val queue = queueOf(from)
         while (queue.isNotEmpty()) {
             val obj = queue.poll()!!
             if (obj == ConstantDescriptor.Null) {
