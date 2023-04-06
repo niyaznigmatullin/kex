@@ -4,6 +4,7 @@ import kotlinx.collections.immutable.*
 import kotlinx.coroutines.yield
 import org.vorpal.research.kex.ExecutionContext
 import org.vorpal.research.kex.asm.analysis.symbolic.*
+import org.vorpal.research.kex.asm.analysis.symgraph2.heapstate.HeapState
 import org.vorpal.research.kex.descriptor.ConstantDescriptor
 import org.vorpal.research.kex.descriptor.Descriptor
 import org.vorpal.research.kex.descriptor.ObjectDescriptor
@@ -19,7 +20,6 @@ import org.vorpal.research.kex.state.PredicateState
 import org.vorpal.research.kex.state.predicate.*
 import org.vorpal.research.kex.state.term.ArgumentTerm
 import org.vorpal.research.kex.state.term.Term
-import org.vorpal.research.kex.state.term.ValueTerm
 import org.vorpal.research.kex.state.transformer.*
 import org.vorpal.research.kex.trace.symbolic.*
 import org.vorpal.research.kfg.ir.Method
@@ -42,33 +42,15 @@ class MethodAbstractlyInvocator(
     suspend fun invokeMethod(
         heapState: HeapState,
         thisArg: GraphObject,
-        arguments: List<GraphObject>
+        arguments: List<Argument>
     ): Collection<CallResult> {
-        val firstInstruction = rootMethod.body.entry.instructions.first()
-        val terms = mutableMapOf<GraphObject, Term>()
-        val statePredicates = mutableListOf<Predicate>()
-        val nullCheckPredicates = mutableListOf<Predicate>()
         if (thisArg == GraphObject.Null && !rootMethod.isStatic) {
             return emptyList()
         }
-        val objects = heapState.objects
-        objects.forEach {
-            when (it) {
-                GraphObject.Null -> {
-                    terms[it] = const(null)
-                }
-
-                else -> {
-                    val newTerm = generate(it.type)
-                    if (thisArg != it && !arguments.contains(it)) {
-                        statePredicates.add(state { newTerm.new() })
-                    }
-                    nullCheckPredicates.add(path { (newTerm eq null) equality false })
-                    terms[it] = newTerm
-                }
-            }
-        }
-        addObjectsFields(objects, terms, statePredicates)
+        val initializer = ObjectInitializer(heapState.objects, thisArg, arguments)
+        val terms = initializer.generateObjectTerms()
+        val statePredicates = initializer.statePredicates
+        val nullCheckPredicates = initializer.nullCheckPredicates
         allObjectsBefore.clear()
         allObjectsBefore.putAll(terms.filterValues { it != const(null) }
             .map { (obj, term) -> term to obj })
@@ -90,7 +72,7 @@ class MethodAbstractlyInvocator(
                 this[values.getArgument(index, rootMethod, type)] = argTerm
                 if (type.symbolicType is KexClass) {
                     statePredicates.add(state {
-                        argTerm equality terms.getValue(arguments[index])
+                        argTerm equality terms.getValue((arguments[index] as ObjectArgument).obj)
                     })
                 }
             }
@@ -104,6 +86,7 @@ class MethodAbstractlyInvocator(
         }.toMap().toPersistentMap()
         val initialNullCheckTerms = terms.filterValues { it.type !is KexNull }.values.toPersistentSet()
         val initialTypeCheckedTerms = initialTypeInfo
+        val firstInstruction = rootMethod.body.entry.instructions.first()
         pathSelector.add(
             TraverserState(
                 symbolicState = persistentSymbolicState(
@@ -132,33 +115,40 @@ class MethodAbstractlyInvocator(
         return invocationPaths
     }
 
-    private fun addObjectsFields(
-        objects: Collection<GraphObject>,
-        terms: Map<GraphObject, Term>,
-        statePredicates: MutableList<Predicate>
+    inner class ObjectInitializer(
+        private val objects: Collection<GraphObject>,
+        private val thisArg: GraphObject,
+        private val arguments: List<Argument>
     ) {
-        objects.filter { it != GraphObject.Null }.forEach { obj ->
-            val objectTerm = terms.getValue(obj)
-            addFields(
-                obj.objectFields.mapValues { (_, obj) -> terms.getValue(obj) },
-                objectTerm,
-                statePredicates
-            )
-            addFields(obj.primitiveFields, objectTerm, statePredicates)
-        }
-    }
+        val statePredicates = mutableListOf<Predicate>()
+        val nullCheckPredicates = mutableListOf<Predicate>()
 
-    private fun addFields(
-        fieldsToAdd: Map<Pair<String, KexType>, Term>,
-        objectTerm: Term,
-        predicates: MutableList<Predicate>
-    ) {
-        for ((field, valueTerm) in fieldsToAdd) {
-            val (fieldName, fieldType) = field
-            predicates.add(state {
-                objectTerm.field(fieldType, fieldName).store(valueTerm)
-            })
-            termsOfFieldsBefore[objectTerm to fieldName] = valueTerm
+        fun generateObjectTerms(): Map<GraphObject, Term> {
+            val terms = objects.associateWith {
+                when (it) {
+                    GraphObject.Null -> const(null)
+                    else -> generate(it.type)
+                }
+            }
+            for ((obj, objectTerm) in terms.filter { it.key != GraphObject.Null }) {
+                if (thisArg != obj && !arguments.any { it is ObjectArgument && it.obj == obj }) {
+                    statePredicates.add(state { objectTerm.new() })
+                }
+                nullCheckPredicates.add(path { (objectTerm eq null) equality false })
+                addFieldsTo(obj.objectFields.mapValues { terms.getValue(it.value) }, objectTerm)
+                addFieldsTo(obj.primitiveFields, objectTerm)
+            }
+            return terms
+        }
+
+        private fun addFieldsTo(fieldsToAdd: Map<Pair<String, KexType>, Term>, objectTerm: Term) {
+            for ((field, valueTerm) in fieldsToAdd) {
+                val (fieldName, fieldType) = field
+                statePredicates.add(state {
+                    objectTerm.field(fieldType, fieldName).store(valueTerm)
+                })
+                termsOfFieldsBefore[objectTerm to fieldName] = valueTerm
+            }
         }
     }
 
@@ -224,10 +214,6 @@ class MethodAbstractlyInvocator(
         }
         var updatedState = predicateState
 //        println("before : $predicateState")
-        val newFreeTerms = convertArgsToFreeTerms(updatedState).let { (terms, state) ->
-            updatedState = state
-            terms
-        }
         val fields = extractValues(termsOfFieldsBefore, mapToRepresenter, updatedState).let { (fields, state) ->
             updatedState = state
             fields
@@ -270,7 +256,6 @@ class MethodAbstractlyInvocator(
                 activeObjects,
                 returnDescriptor?.let { mapping.getValue(it) },
                 updatedState,
-                newFreeTerms,
             )
         )
     }
@@ -298,9 +283,7 @@ class MethodAbstractlyInvocator(
 
     class RemovePredicates : Transformer<RemovePredicates> {
         override fun transformBase(predicate: Predicate): Predicate {
-            if (TermCollector.getFullTermSet(predicate).any {
-                it.type is KexClass
-            }) {
+            if (TermCollector.getFullTermSet(predicate).any { it.type is KexClass }) {
                 return nothing()
             }
             return super.transformBase(predicate)

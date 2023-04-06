@@ -5,10 +5,18 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.runBlocking
 import org.vorpal.research.kex.ExecutionContext
+import org.vorpal.research.kex.asm.analysis.symgraph2.heapstate.EmptyHeapState
+import org.vorpal.research.kex.asm.analysis.symgraph2.heapstate.HeapState
+import org.vorpal.research.kex.asm.analysis.symgraph2.heapstate.InvocationResultHeapState
+import org.vorpal.research.kex.asm.analysis.symgraph2.heapstate.UnionHeapState
 import org.vorpal.research.kex.ktype.KexClass
 import org.vorpal.research.kex.ktype.kexType
-import org.vorpal.research.kex.state.PredicateState
-import org.vorpal.research.kex.state.emptyState
+import org.vorpal.research.kex.smt.AsyncSMTProxySolver
+import org.vorpal.research.kex.smt.Result
+import org.vorpal.research.kex.state.*
+import org.vorpal.research.kex.state.term.*
+import org.vorpal.research.kex.state.transformer.TermRemapper
+import org.vorpal.research.kex.state.transformer.collectTerms
 import org.vorpal.research.kex.util.newFixedThreadPoolContextWithMDC
 import org.vorpal.research.kfg.ir.Class
 import org.vorpal.research.kfg.ir.Method
@@ -17,10 +25,12 @@ import org.vorpal.research.kfg.type.Type
 import org.vorpal.research.kfg.type.TypeFactory
 import kotlin.system.measureTimeMillis
 
-class GraphBuilder(val ctx: ExecutionContext, private val klass: Class) {
+class GraphBuilder(val ctx: ExecutionContext, private val klass: Class) : TermBuilder {
     private val publicMethods = klass.allMethods.filter { it.isPublic }
     private val coroutineContext = newFixedThreadPoolContextWithMDC(5, "abstract-caller")
     private var calls = 0
+    private val activeStates = mutableSetOf<HeapState>()
+    private val allStates = mutableSetOf<HeapState>()
 
     val types: TypeFactory
         get() = ctx.types
@@ -33,33 +43,131 @@ class GraphBuilder(val ctx: ExecutionContext, private val klass: Class) {
             val allCalls = publicMethods.flatMap { m -> getAbstractCalls(state, m) }
             calls += allCalls.size
             val callResults =
-                allCalls.map { c -> async { c.call(ctx, state).map { Pair(c, it) } } }.awaitAll().flatten()
-            for ((c, p) in callResults) {
-                val newState = HeapState(
-                    state,
-                    c,
-                    p.objects,
-                    p.activeObjects,
-                    state.predicateState + p.predicateState,
-                    buildList {
-                        addAll(state.freeTerms)
-                        addAll(p.freeTerms)
+                allCalls.map { c ->
+                    async {
+                        c.call(ctx, state).mapNotNull { buildNewStateOrNull(state, c, it) }
                     }
-                )
-                if (!newStates.any { it.checkIsomorphism(newState) }) {
-                    newStates.add(newState)
+                }.awaitAll().flatten()
+            for (newState in callResults) {
+                val (unionState, stateToRemove) = addState(newState)
+                if (unionState == null) {
+                    continue
                 }
+                if (unionState === newState) {
+                    newStates.add(newState)
+                    continue
+                }
+                if (stateToRemove != null) {
+                    if (stateToRemove in oldStates) {
+                        oldStates.remove(stateToRemove)
+                        oldStates.add(unionState)
+                    } else {
+//                        check(stateToRemove in newStates)
+                        newStates.remove(stateToRemove)
+                        newStates.add(unionState)
+                    }
+                }
+//                if (!newStates.any { it.checkIsomorphism(newState) != null }) {
+//                    newStates.add(newState)
+//                }
             }
         }
         newStates
     }
 
+    private suspend fun buildNewStateOrNull(state: HeapState, c: AbsCall, p: CallResult): HeapState? {
+        val predicateState = state.predicateState + p.predicateState
+        val result = AsyncSMTProxySolver(ctx).use {
+            it.isPathPossibleAsync(predicateState, emptyState())
+        }
+        if (result == Result.UnsatResult) {
+            return null
+        }
+        val namedTerms = buildSet {
+            addAll(collectTerms(predicateState) { it.isNamed })
+            for (obj in p.objects) {
+                addAll(obj.primitiveFields.values)
+            }
+        }.associateWith { generate(it.type) }
+        val replacedPredicateState = TermRemapper(namedTerms).apply(predicateState)
+        val freeTerms = namedTerms
+            .filterKeys { it is ArgumentTerm }
+            .mapKeys { it.key as ArgumentTerm }
+        val absCall = c.setPrimitiveTerms(freeTerms)
+        val reverseMapping = namedTerms.toList().associate { it.second to it.first }
+//        println("${p.objects} $namedTerms $predicateState")
+        p.objects.forEach { it.remapTerms(namedTerms) }
+//        println("after ${p.objects}")
+        return InvocationResultHeapState(
+            p.objects,
+            p.activeObjects,
+            replacedPredicateState,
+            absCall,
+            state,
+            reverseMapping,
+        )
+    }
+
+    private fun makeReverseFieldMapping(
+        state: HeapState,
+        mapping: Map<GraphObject, GraphObject>
+    ): Map<Term, Term> {
+        return buildMap {
+            for (obj1 in state.objects) {
+                val obj2 = mapping.getValue(obj1)
+                for ((field, term2) in obj2.primitiveFields) {
+                    val term1 = obj1.primitiveFields.getValue(field)
+                    put(term2, term1)
+                }
+            }
+        }
+    }
+
+    private suspend fun addState(
+        newState: HeapState
+    ): Pair<HeapState?, HeapState?> {
+        allStates.add(newState)
+        for (state in activeStates) {
+            val objMap = state.checkIsomorphism(newState) ?: continue
+            val fieldMapping = makeReverseFieldMapping(state, objMap)
+            val mappedNewPredicateState = TermRemapper(fieldMapping).apply(newState.predicateState)
+            val result = AsyncSMTProxySolver(ctx).use {
+                it.isViolatedAsync(mappedNewPredicateState, state.predicateState)
+            }
+            if (result == Result.UnsatResult) {
+                return null to null
+            }
+            val unionState = merge(state, newState, objMap, fieldMapping, mappedNewPredicateState)
+            allStates.add(unionState)
+            activeStates.remove(state)
+            activeStates.add(unionState)
+            return unionState to state
+        }
+        activeStates.add(newState)
+        return newState to null
+    }
+
+    private fun merge(
+        oldState: HeapState,
+        newState: HeapState,
+        mappingOldToNew: Map<GraphObject, GraphObject>,
+        termsNewToOld: Map<Term, Term>,
+        mappedNewPredicateState: PredicateState,
+    ): HeapState {
+        val unionPredicateState = ChoiceState(listOf(oldState.predicateState, mappedNewPredicateState))
+        val termsOldToNew = termsNewToOld.asSequence().associate { it.value to it.key }
+        return UnionHeapState(unionPredicateState, oldState, newState, mappingOldToNew, termsOldToNew)
+    }
+
     private inner class AbsCallGenerator(val state: HeapState, val m: Method) {
-        private val argumentsList = mutableListOf<GraphObject>()
+        private val argumentsList = mutableListOf<Argument>()
         private val callsList = mutableListOf<AbsCall>()
 
-        private fun getAllObjectsOfSubtype(type: Type) =
-            state.activeObjects.filter { it.type.isSubtypeOf(this@GraphBuilder.types, type.kexType) }
+        private fun getAllObjectsOfSubtype(type: Type): List<GraphObject> {
+            return state.activeObjects.filter {
+                it.type.isSubtypeOf(this@GraphBuilder.types, type.kexType) || it == GraphObject.Null
+            }
+        }
 
         private fun backtrack(currentArgumentIndex: Int) {
             if (currentArgumentIndex == m.argTypes.size) {
@@ -73,16 +181,17 @@ class GraphBuilder(val ctx: ExecutionContext, private val klass: Class) {
                 }
                 return
             }
-            argumentsList.add(GraphObject.Null)
-            backtrack(currentArgumentIndex + 1)
-            argumentsList.removeLast()
             val argType = m.argTypes[currentArgumentIndex]
             if (argType is ClassType) {
                 for (arg in getAllObjectsOfSubtype(argType)) {
-                    argumentsList.add(arg)
+                    argumentsList.add(ObjectArgument(arg))
                     backtrack(currentArgumentIndex + 1)
                     argumentsList.removeLast()
                 }
+            } else {
+                argumentsList.add(NoneArgument)
+                backtrack(currentArgumentIndex + 1)
+                argumentsList.removeLast()
             }
         }
 
@@ -99,17 +208,8 @@ class GraphBuilder(val ctx: ExecutionContext, private val klass: Class) {
     fun build(maxL: Int) {
         runBlocking(coroutineContext) {
             val time = measureTimeMillis {
-                var oldStates = mutableSetOf(
-                    HeapState(
-                        null,
-                        null,
-                        listOf(GraphObject.Null),
-                        setOf(GraphObject.Null),
-                        emptyState(),
-                        emptyList()
-                    )
-                )
-                val allStates = mutableListOf<HeapState>()
+                var oldStates = mutableSetOf<HeapState>(EmptyHeapState)
+                addState(EmptyHeapState)
                 for (l in 0 until maxL) {
                     oldStates = exploreStates(oldStates)
                     if (oldStates.isEmpty()) {
@@ -119,67 +219,15 @@ class GraphBuilder(val ctx: ExecutionContext, private val klass: Class) {
                     if (l == 0) {
                         println(oldStates)
                     }
-                    for (state in oldStates) {
-                        if (!allStates.any { otherState ->
-                                otherState.checkIsomorphism(state)
-                            }) {
-                            allStates.add(state)
-                        }
-                    }
                 }
                 println("the number of states = ${allStates.size}")
-                println(allStates.withIndex().joinToString(separator = "\n") { (stateIndex, state) ->
-                    stateToString(stateIndex, state)
+                val stateEnumeration = allStates.withIndex().associate { (index, state) -> state to index }
+                println(allStates.joinToString(separator = "\n") { state ->
+                    state.toString(stateEnumeration)
                 })
-                println("Abstract calls: ${calls}")
+                println("Abstract calls: $calls")
             }
             println("Took ${time}ms")
-        }
-    }
-
-    companion object {
-        fun stateToString(stateIndex: Int, state: HeapState): String {
-            val stateRepr = buildString {
-                appendLine("[[State #$stateIndex]]")
-                val callSequence = mutableListOf<String>()
-                var c: HeapState? = state
-                while (c?.absCall != null) {
-                    callSequence.add(c.absCall!!.method.toString())
-                    c = c.prevHeapState
-                }
-                appendLine(callSequence.reversed())
-                appendLine("Nodes = ${state.objects.size}, active = ${state.activeObjects.size}")
-                val stateToIndex = state.objects.withIndex().associate { (i, v) ->
-                    val id = if (v == GraphObject.Null) {
-                        "null"
-                    } else if (state.activeObjects.contains(v)) {
-                        "a$i"
-                    } else {
-                        "$i"
-                    }
-                    Pair(v, id)
-                }
-                for (d in state.objects) {
-                    if (d.type !is KexClass) {
-                        continue
-                    }
-                    for ((_, value) in d.objectFields) {
-                        val from = stateToIndex.getValue(d)
-                        val to = stateToIndex.getValue(value)
-                        appendLine("$from -> $to")
-                    }
-                }
-                for (obj in state.objects) {
-                    val objName = stateToIndex.getValue(obj)
-                    val objFields = obj.primitiveFields.map { (field, value) ->
-                        ".${field.first} = $value"
-                    }.joinToString(", ")
-                    appendLine("  Object $objName { $objFields }")
-                }
-                appendLine("With state: \n ${state.predicateState}")
-                appendLine("Free terms: ${state.freeTerms}")
-            }
-            return stateRepr
         }
     }
 }

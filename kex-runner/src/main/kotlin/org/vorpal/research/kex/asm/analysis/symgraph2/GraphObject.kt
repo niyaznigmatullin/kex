@@ -11,4 +11,16 @@ class GraphObject(val type: KexType) {
     companion object {
         val Null = GraphObject(KexNull())
     }
+
+    fun remapTerms(mapping: Map<Term, Term>) {
+        primitiveFields = primitiveFields.mapValues { (_, value) ->
+            mapping.getValue(value)
+        }
+    }
+
+    override fun toString(): String {
+        return "GraphObject(type=$type, primitiveFields=$primitiveFields)"
+    }
+
+
 }

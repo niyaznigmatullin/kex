@@ -1,18 +1,14 @@
-package org.vorpal.research.kex.asm.analysis.symgraph2
+package org.vorpal.research.kex.asm.analysis.symgraph2.heapstate
 
+import org.vorpal.research.kex.asm.analysis.symgraph2.GraphObject
 import org.vorpal.research.kex.ktype.KexClass
 import org.vorpal.research.kex.state.PredicateState
-import org.vorpal.research.kex.state.term.Term
 
-data class HeapState(
-    val prevHeapState: HeapState?,
-    val absCall: AbsCall?,
+abstract class HeapState(
     val objects: Collection<GraphObject>,
     val activeObjects: Set<GraphObject>,
     val predicateState: PredicateState,
-    val freeTerms: Collection<Term>,
 ) {
-
     class PermutationGenerator(n: Int) {
         val p = IntArray(n) { it }
 
@@ -36,9 +32,9 @@ data class HeapState(
         }
     }
 
-    fun checkIsomorphism(other: HeapState): Boolean {
+    fun checkIsomorphism(other: HeapState): Map<GraphObject, GraphObject>? {
         if (objects.size != other.objects.size || activeObjects.size != other.activeObjects.size) {
-            return false
+            return null
         }
         val result = checkIsomorphismImpl(
             mapOf(),
@@ -75,11 +71,10 @@ data class HeapState(
         reverseMapping: Map<GraphObject, GraphObject>,
         activeDescriptors: Set<GraphObject>,
         otherActiveDescriptors: Set<GraphObject>,
-    ): Boolean {
+    ): Map<GraphObject, GraphObject>? {
         if (activeDescriptors.all { mapping.containsKey(it) }) {
-            return otherActiveDescriptors.all { reverseMapping.containsKey(it) }
-//            check(otherActiveDescriptors.all { reverseMapping.containsKey(it) })
-//            return true
+            check(otherActiveDescriptors.all { reverseMapping.containsKey(it) })
+            return mapping
         }
         val obj = activeDescriptors.first { !mapping.containsKey(it) }
         for (mapTo in otherActiveDescriptors.filter { !reverseMapping.containsKey(it) }) {
@@ -88,11 +83,14 @@ data class HeapState(
             if (!tryAddMapping(newMapping, newReverseMapping, obj, mapTo, activeDescriptors, otherActiveDescriptors)) {
                 continue
             }
-            if (checkIsomorphismImpl(newMapping, newReverseMapping, activeDescriptors, otherActiveDescriptors)) {
-                return true
-            }
+            checkIsomorphismImpl(
+                newMapping,
+                newReverseMapping,
+                activeDescriptors,
+                otherActiveDescriptors
+            )?.let { return it }
         }
-        return false
+        return null
     }
 
     private fun tryAddMapping(
@@ -160,4 +158,44 @@ data class HeapState(
         }
         return true
     }
+
+    private fun objectGraphToString() = buildString {
+        appendLine("Nodes = ${objects.size}, active = ${activeObjects.size}")
+        val stateToIndex = objects.withIndex().associate { (i, v) ->
+            val id = if (v == GraphObject.Null) {
+                "null"
+            } else if (activeObjects.contains(v)) {
+                "a$i"
+            } else {
+                "$i"
+            }
+            Pair(v, id)
+        }
+        for (d in objects) {
+            if (d.type !is KexClass) {
+                continue
+            }
+            for ((_, value) in d.objectFields) {
+                val from = stateToIndex.getValue(d)
+                val to = stateToIndex.getValue(value)
+                appendLine("$from -> $to")
+            }
+        }
+        for (obj in objects) {
+            val objName = stateToIndex.getValue(obj)
+            val objFields = obj.primitiveFields.map { (field, value) ->
+                ".${field.first} = $value"
+            }.joinToString(", ")
+            appendLine("  Object $objName { $objFields }")
+        }
+        appendLine("With state: \n $predicateState")
+    }
+
+    fun toString(stateEnumeration: Map<HeapState, Int>) = buildString {
+        appendLine("[[${this@HeapState.javaClass.simpleName} #${stateEnumeration.getValue(this@HeapState)}]]")
+        appendLine(additionalToString(stateEnumeration))
+        appendLine(objectGraphToString())
+    }
+
+    abstract fun additionalToString(stateEnumeration: Map<HeapState, Int>): String
 }
