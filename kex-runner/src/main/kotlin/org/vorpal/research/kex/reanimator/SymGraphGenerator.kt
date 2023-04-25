@@ -22,9 +22,8 @@ class SymGraphGenerator(
     override val ctx: ExecutionContext,
     val method: Method,
     val testName: String,
-    klass: Class,
+    val graphBuilder: GraphBuilder,
 ) : ParameterGenerator {
-    private val graphBuilder = GraphBuilder(ctx, klass)
 
     private val constGenerator = ConstantGenerator(GeneratorContext(ctx, PredicateStateAnalysis(ctx.cm)))
 
@@ -32,11 +31,7 @@ class SymGraphGenerator(
     private val printer = SymGraphTestCasePrinter(ctx, method.packageName, testName)
 //    val testKlassName = printer.fullKlassName
 
-    init {
-        graphBuilder.build(3)
-    }
-
-    fun generate(descriptors: Parameters<Descriptor>): Boolean {
+    suspend fun generate(descriptors: Parameters<Descriptor>): Boolean {
         val (params, sequence) = getActionSequences(descriptors) ?: return false
         printer.print(method, params, sequence)
         return true
@@ -51,23 +46,28 @@ class SymGraphGenerator(
         return printer.targetFile.toPath()
     }
 
-    fun getActionSequences(descriptors: Parameters<Descriptor>): Pair<Parameters<ActionSequence>, List<ActionSequence>>? =
-        with(descriptors) {
-            val objectDescriptors = buildSet {
+    suspend fun getActionSequences(descriptors: Parameters<Descriptor>): Pair<Parameters<ActionSequence>, List<ActionSequence>>? {
+        val objectDescriptors = buildSet {
+            with(descriptors) {
                 addAll(arguments.filter { it.type is KexClass }.map { it as ObjectDescriptor })
                 instance?.let { add(it as ObjectDescriptor) }
             }
-            val (rootSequence, mapping) = graphBuilder.restoreActionSequences(objectDescriptors) ?: return null
-            val instance = descriptors.instance?.let { mapping.getValue(it as ObjectDescriptor) }
-            val arguments = arguments.map {
-                when (it) {
-                    is ObjectDescriptor -> mapping.getValue(it)
-
-                    else -> constGenerator.generate(it)
-                }
-            }
-            return Parameters(instance, arguments) to rootSequence
         }
+        val result = graphBuilder.restoreActionSequences(objectDescriptors)
+        if (result == null) {
+            println(result)
+        }
+        val (rootSequence, mapping) = result ?: return null
+        val instance = descriptors.instance?.let { mapping.getValue(it as ObjectDescriptor) }
+        val arguments = descriptors.arguments.map {
+            when (it) {
+                is ObjectDescriptor -> mapping.getValue(it)
+
+                else -> constGenerator.generate(it)
+            }
+        }
+        return Parameters(instance, arguments) to rootSequence
+    }
 
 
 }

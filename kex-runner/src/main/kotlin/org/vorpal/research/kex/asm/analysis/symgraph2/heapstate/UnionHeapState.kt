@@ -26,7 +26,7 @@ class UnionHeapState(
         append(stateEnumeration.getValue(this@UnionHeapState))
     }
 
-    override fun restoreCalls(ctx: ExecutionContext, mapping: ConcreteMapping): RestorationResult {
+    override suspend fun restoreCalls(ctx: ExecutionContext, mapping: ConcreteMapping): RestorationResult {
         return if (!firstParentState.checkPredicateState(ctx, mapping.terms)) {
             val secondMapping = mapping.terms.mapKeys { termMappingToSecondParent.getOrDefault(it.key, it.key) }
             val terms = secondParentState.terms.associateWith { secondMapping.getValue(it) }

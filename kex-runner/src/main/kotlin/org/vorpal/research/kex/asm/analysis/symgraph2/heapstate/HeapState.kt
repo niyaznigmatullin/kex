@@ -1,6 +1,5 @@
 package org.vorpal.research.kex.asm.analysis.symgraph2.heapstate
 
-import kotlinx.coroutines.runBlocking
 import org.vorpal.research.kex.ExecutionContext
 import org.vorpal.research.kex.asm.analysis.symgraph2.GraphObject
 import org.vorpal.research.kex.descriptor.ConstantDescriptor
@@ -217,7 +216,7 @@ abstract class HeapState(
 
     abstract fun additionalToString(stateEnumeration: Map<HeapState, Int>): String
 
-    fun getMappingToConcreteOrNull(
+    suspend fun getMappingToConcreteOrNull(
         ctx: ExecutionContext,
         objectDescriptors: Set<ObjectDescriptor>
     ): Pair<List<ActionSequence>, Map<ObjectDescriptor, ActionSequence>>? {
@@ -235,18 +234,16 @@ abstract class HeapState(
         return result.rootSequence to objectGenerators
     }
 
-    abstract fun restoreCalls(ctx: ExecutionContext, mapping: ConcreteMapping): RestorationResult
+    abstract suspend fun restoreCalls(ctx: ExecutionContext, mapping: ConcreteMapping): RestorationResult
 
-    fun checkPredicateState(ctx: ExecutionContext, terms: Map<Term, Descriptor>): Boolean {
+    suspend fun checkPredicateState(ctx: ExecutionContext, terms: Map<Term, Descriptor>): Boolean {
         var concretePredicateState = predicateState
         for ((term, desc) in terms) {
             concretePredicateState = concretePredicateState.addPredicate(state { term equality desc.term })
             concretePredicateState += desc.query
         }
-        val result = runBlocking {
-            AsyncSMTProxySolver(ctx).use {
-                it.isPathPossibleAsync(concretePredicateState, emptyState())
-            }
+        val result = AsyncSMTProxySolver(ctx).use {
+            it.isPathPossibleAsync(concretePredicateState, emptyState())
         }
         check(result.known)
         return result is Result.SatResult
@@ -260,7 +257,7 @@ abstract class HeapState(
     class ConcreteMapping(val mapping: Map<ObjectDescriptor, GraphObject>, val terms: Map<Term, Descriptor>)
 
     inner class ConcreteMapper(val ctx: ExecutionContext, val activeObjectDesc: Set<ObjectDescriptor>) {
-        fun findMapping(
+        suspend fun findMapping(
             mapping: Map<ObjectDescriptor, GraphObject>,
             reverseMapping: Map<GraphObject, ObjectDescriptor>
         ): ConcreteMapping? {
@@ -276,10 +273,8 @@ abstract class HeapState(
                         concretePredicateState += concreteField.query
                     }
                 }
-                val result = runBlocking {
-                    AsyncSMTProxySolver(ctx).use {
-                        it.isPathPossibleAsync(concretePredicateState, emptyState())
-                    }
+                val result = AsyncSMTProxySolver(ctx).use {
+                    it.isPathPossibleAsync(concretePredicateState, emptyState())
                 }
                 if (result !is Result.SatResult) {
                     return null

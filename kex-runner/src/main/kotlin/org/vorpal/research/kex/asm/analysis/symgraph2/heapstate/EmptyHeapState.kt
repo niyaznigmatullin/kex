@@ -13,7 +13,7 @@ object EmptyHeapState : HeapState(
     emptySet()
 ) {
     override fun additionalToString(stateEnumeration: Map<HeapState, Int>) = "Empty"
-    override fun restoreCalls(ctx: ExecutionContext, mapping: ConcreteMapping): RestorationResult {
+    override suspend fun restoreCalls(ctx: ExecutionContext, mapping: ConcreteMapping): RestorationResult {
         return RestorationResult(mapOf(GraphObject.Null to PrimaryValue(null)), listOf())
     }
 }

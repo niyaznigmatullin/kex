@@ -240,11 +240,14 @@ class GraphBuilder(val ctx: ExecutionContext, private val klass: Class) : TermBu
         }
     }
 
-    fun restoreActionSequences(objectDescriptors: Set<ObjectDescriptor>): Pair<List<ActionSequence>, Map<ObjectDescriptor, ActionSequence>>? {
-        val (state, result) = allStates.map { state ->
-            state.getMappingToConcreteOrNull(ctx, objectDescriptors)?.let { state to it }
-        }.firstOrNull { it != null } ?: return null
-        return result
+    suspend fun restoreActionSequences(objectDescriptors: Set<ObjectDescriptor>): Pair<List<ActionSequence>, Map<ObjectDescriptor, ActionSequence>>? {
+        for (state in allStates) {
+            val result = state.getMappingToConcreteOrNull(ctx, objectDescriptors)
+            if (result != null) {
+                return result
+            }
+        }
+        return null
 //        val mapping = result.mapping
 //        val stateEnumeration = allStates.withIndex().associate { (index, state) -> state to index }
 //        return buildString {

@@ -14,6 +14,7 @@ import org.vorpal.research.kex.ktype.KexRtManager.isJavaRt
 import org.vorpal.research.kex.ktype.KexRtManager.rtMapped
 import org.vorpal.research.kex.ktype.KexType
 import org.vorpal.research.kex.ktype.kexType
+import org.vorpal.research.kex.parameters.Parameters
 import org.vorpal.research.kex.smt.AsyncChecker
 import org.vorpal.research.kex.smt.Result
 import org.vorpal.research.kex.state.PredicateState
@@ -23,6 +24,7 @@ import org.vorpal.research.kex.state.term.Term
 import org.vorpal.research.kex.state.transformer.*
 import org.vorpal.research.kex.trace.symbolic.*
 import org.vorpal.research.kfg.ir.Method
+import org.vorpal.research.kfg.ir.value.instruction.Instruction
 import org.vorpal.research.kfg.ir.value.instruction.ReturnInst
 import org.vorpal.research.kfg.type.NullType
 import org.vorpal.research.kthelper.collection.queueOf
@@ -191,6 +193,10 @@ class MethodAbstractlyInvocator(
         } else {
             super.traverseReturnInst(inst)
         }
+    }
+
+    override suspend fun report(inst: Instruction, parameters: Parameters<Descriptor>, testPostfix: String): Boolean {
+        return false
     }
 
     private fun report_(

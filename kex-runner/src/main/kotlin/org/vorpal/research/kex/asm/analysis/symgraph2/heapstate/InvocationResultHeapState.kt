@@ -31,7 +31,7 @@ class InvocationResultHeapState(
         append(")")
     }
 
-    override fun restoreCalls(ctx: ExecutionContext, mapping: ConcreteMapping): RestorationResult {
+    override suspend fun restoreCalls(ctx: ExecutionContext, mapping: ConcreteMapping): RestorationResult {
 //        println("$this -> $parentState")
         val actionSequenceGenerator = ConstantGenerator(GeneratorContext(ctx, PredicateStateAnalysis(ctx.cm)))
         val termsConcretization = mapping.terms

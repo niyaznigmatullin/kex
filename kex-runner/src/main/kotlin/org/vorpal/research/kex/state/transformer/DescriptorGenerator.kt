@@ -100,7 +100,7 @@ fun generateReturnValue(
     state: PredicateState,
     requiredTerms: Collection<Term>,
 ): Map<Term, Descriptor> {
-    val generator = DescriptorGenerator(method, ctx, model, FinalDescriptorReanimator(method, model, ctx))
+    val generator = DescriptorGenerator(method, ctx, model, FinalDescriptorReanimator(model, ctx))
     generator.apply(state)
     return requiredTerms.associateWith {
         if (it !in generator.memory) {
@@ -117,7 +117,7 @@ fun generateFinalObjectsState(
     model: SMTModel,
     state: PredicateState,
 ): Map<Term, Descriptor> {
-    val generator = DescriptorGenerator(method, ctx, model, FinalDescriptorReanimator(method, model, ctx))
+    val generator = DescriptorGenerator(method, ctx, model, FinalDescriptorReanimator(model, ctx))
     generator.apply(state)
     return generator.memory.filterKeys { it.type is KexClass }
 }
