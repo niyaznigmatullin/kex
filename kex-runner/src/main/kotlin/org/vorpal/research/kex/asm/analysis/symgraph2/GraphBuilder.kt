@@ -26,8 +26,8 @@ import org.vorpal.research.kfg.type.Type
 import org.vorpal.research.kfg.type.TypeFactory
 import kotlin.system.measureTimeMillis
 
-class GraphBuilder(val ctx: ExecutionContext, private val klass: Class) : TermBuilder {
-    private val publicMethods = klass.allMethods.filter { it.isPublic }
+class GraphBuilder(val ctx: ExecutionContext, klasses: Set<Class>) : TermBuilder {
+    private val publicMethods = klasses.flatMap { it.allMethods }.filter { it.isPublic }
     private val coroutineContext = newFixedThreadPoolContextWithMDC(5, "abstract-caller")
     private var calls = 0
     private val activeStates = mutableSetOf<HeapState>()

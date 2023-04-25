@@ -3,7 +3,6 @@ package org.vorpal.research.kex.asm.analysis.symgraph2
 import kotlinx.coroutines.*
 import org.vorpal.research.kex.ExecutionContext
 import org.vorpal.research.kex.asm.analysis.symbolic.*
-import org.vorpal.research.kex.asm.analysis.symbolic.InstructionSymbolicChecker
 import org.vorpal.research.kex.compile.CompilationException
 import org.vorpal.research.kex.config.kexConfig
 import org.vorpal.research.kex.descriptor.Descriptor
@@ -21,15 +20,11 @@ import kotlin.time.ExperimentalTime
 class InstructionSymbolicCheckerGraph(
     ctx: ExecutionContext,
     rootMethod: Method,
+    private val graphBuilder: GraphBuilder
 ) : SymbolicTraverser(ctx, rootMethod) {
     override val pathSelector: SymbolicPathSelector = DequePathSelector()
     override val callResolver: SymbolicCallResolver = DefaultCallResolver(ctx)
     override val invokeDynamicResolver: SymbolicInvokeDynamicResolver = DefaultCallResolver(ctx)
-    private val graphBuilder = GraphBuilder(ctx, rootMethod.klass)
-
-    init {
-        graphBuilder.build(3)
-    }
 
     companion object {
         @ExperimentalTime
@@ -40,10 +35,12 @@ class InstructionSymbolicCheckerGraph(
 
             val actualNumberOfExecutors = maxOf(1, minOf(executors, targets.size))
             val coroutineContext = newFixedThreadPoolContextWithMDC(actualNumberOfExecutors, "symbolic-dispatcher")
+            val graphBuilder = GraphBuilder(context, targets.map { it.klass }.toSet())
+            graphBuilder.build(3)
             runBlocking(coroutineContext) {
                 withTimeoutOrNull(timeLimit.seconds) {
                     targets.map {
-                        async { InstructionSymbolicCheckerGraph(context, it).analyze() }
+                        async { InstructionSymbolicCheckerGraph(context, it, graphBuilder).analyze() }
                     }.awaitAll()
                 }
             }

@@ -12,7 +12,7 @@ class SymGraphLauncher(classPaths: List<String>, targetName: String) : KexAnalys
             is ClassLevel -> analysisLevel.klass
             else -> TODO("Not yet implemented")
         }
-        GraphBuilder(context, target).build(4)
+        GraphBuilder(context, setOf(target)).build(4)
     }
 
 }
