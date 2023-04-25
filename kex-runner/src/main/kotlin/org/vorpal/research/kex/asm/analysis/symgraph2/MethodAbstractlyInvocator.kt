@@ -198,7 +198,6 @@ class MethodAbstractlyInvocator(
         objectDescriptors: Map<Term, Descriptor>,
         returnDescriptor: Descriptor?
     ) {
-//        println("{inst} = $inst {parameters} = $parameters {objectDescriptors} = $objectDescriptors")
         val activeDescriptors = getActiveDescriptors(objectDescriptors, returnDescriptor)
         val allDescriptors = findAllReachableDescriptors(activeDescriptors)
         val newObjects = collectNewObjectTerms(predicateState)
@@ -209,18 +208,16 @@ class MethodAbstractlyInvocator(
         val representersByDescriptor = representerObjects.associateBy {
             objectDescriptors.getValue(it)
         }
-        val mapToRepresenter = objectDescriptors.filterValues { it.type !is KexNull }.mapValues { (_, descriptor) ->
-            representersByDescriptor.getValue(descriptor)
-        }
+        val mapToRepresenter = objectDescriptors.filterValues { it.type !is KexNull }
+            .mapValues { (_, descriptor) ->
+                representersByDescriptor.getValue(descriptor)
+            }
         var updatedState = predicateState
-//        println("before : $predicateState")
         val fields = extractValues(termsOfFieldsBefore, mapToRepresenter, updatedState).let { (fields, state) ->
             updatedState = state
             fields
         }
         updatedState = removeNonInterestingPredicates(updatedState)
-//        println("after : $updatedState")
-
         val mapping = allDescriptors.associateWith {
             when (it) {
                 ConstantDescriptor.Null -> GraphObject.Null
@@ -250,10 +247,19 @@ class MethodAbstractlyInvocator(
         val activeObjects = buildSet {
             addAll(activeDescriptors.map { mapping.getValue(it) })
         }
+        val activeObjectsMapping = buildMap {
+            for ((term, oldObject) in activeObjectsBefore) {
+                val descriptor = objectDescriptors.getValue(term)
+                val newObject = mapping.getValue(descriptor)
+                put(oldObject, newObject)
+            }
+            put(GraphObject.Null, GraphObject.Null)
+        }
         invocationPaths.add(
             CallResult(
                 mapping.values,
                 activeObjects,
+                activeObjectsMapping,
                 returnDescriptor?.let { mapping.getValue(it) },
                 updatedState,
             )

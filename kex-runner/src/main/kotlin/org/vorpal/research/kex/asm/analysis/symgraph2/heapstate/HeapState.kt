@@ -1,14 +1,42 @@
 package org.vorpal.research.kex.asm.analysis.symgraph2.heapstate
 
+import kotlinx.coroutines.runBlocking
+import org.vorpal.research.kex.ExecutionContext
 import org.vorpal.research.kex.asm.analysis.symgraph2.GraphObject
+import org.vorpal.research.kex.descriptor.ConstantDescriptor
+import org.vorpal.research.kex.descriptor.Descriptor
+import org.vorpal.research.kex.descriptor.ObjectDescriptor
 import org.vorpal.research.kex.ktype.KexClass
+import org.vorpal.research.kex.ktype.KexNull
+import org.vorpal.research.kex.reanimator.actionsequence.ActionSequence
+import org.vorpal.research.kex.smt.AsyncSMTProxySolver
+import org.vorpal.research.kex.smt.FinalDescriptorReanimator
+import org.vorpal.research.kex.smt.Result
 import org.vorpal.research.kex.state.PredicateState
+import org.vorpal.research.kex.state.emptyState
+import org.vorpal.research.kex.state.predicate.state
+import org.vorpal.research.kex.state.term.Term
 
 abstract class HeapState(
     val objects: Collection<GraphObject>,
     val activeObjects: Set<GraphObject>,
     val predicateState: PredicateState,
+    val terms: Set<Term>,
 ) {
+
+    private val stateToIndex = objects.withIndex().associate { (i, v) ->
+        val id = if (v == GraphObject.Null) {
+            "null"
+        } else if (activeObjects.contains(v)) {
+            "a$i"
+        } else {
+            "$i"
+        }
+        Pair(v, id)
+    }
+
+    fun getObjectIndex(obj: GraphObject) = stateToIndex.getValue(obj)
+
     class PermutationGenerator(n: Int) {
         val p = IntArray(n) { it }
 
@@ -161,16 +189,6 @@ abstract class HeapState(
 
     private fun objectGraphToString() = buildString {
         appendLine("Nodes = ${objects.size}, active = ${activeObjects.size}")
-        val stateToIndex = objects.withIndex().associate { (i, v) ->
-            val id = if (v == GraphObject.Null) {
-                "null"
-            } else if (activeObjects.contains(v)) {
-                "a$i"
-            } else {
-                "$i"
-            }
-            Pair(v, id)
-        }
         for (d in objects) {
             if (d.type !is KexClass) {
                 continue
@@ -198,4 +216,125 @@ abstract class HeapState(
     }
 
     abstract fun additionalToString(stateEnumeration: Map<HeapState, Int>): String
+
+    fun getMappingToConcreteOrNull(
+        ctx: ExecutionContext,
+        objectDescriptors: Set<ObjectDescriptor>
+    ): Pair<List<ActionSequence>, Map<ObjectDescriptor, ActionSequence>>? {
+        if (objectDescriptors.size > activeObjects.size) {
+            return null
+        }
+        val concreteMapper = ConcreteMapper(ctx, objectDescriptors)
+        val mapping = concreteMapper.findMapping(emptyMap(), emptyMap()) ?: return null
+        val result = restoreCalls(ctx, mapping)
+        val objectGenerators = objectDescriptors.associateWith { descriptor ->
+            val graphObject = mapping.mapping.getValue(descriptor)
+            val actionSequence = result.objectGenerators.getValue(graphObject)
+            actionSequence
+        }
+        return result.rootSequence to objectGenerators
+    }
+
+    abstract fun restoreCalls(ctx: ExecutionContext, mapping: ConcreteMapping): RestorationResult
+
+    fun checkPredicateState(ctx: ExecutionContext, terms: Map<Term, Descriptor>): Boolean {
+        var concretePredicateState = predicateState
+        for ((term, desc) in terms) {
+            concretePredicateState = concretePredicateState.addPredicate(state { term equality desc.term })
+            concretePredicateState += desc.query
+        }
+        val result = runBlocking {
+            AsyncSMTProxySolver(ctx).use {
+                it.isPathPossibleAsync(concretePredicateState, emptyState())
+            }
+        }
+        check(result.known)
+        return result is Result.SatResult
+    }
+
+    class RestorationResult(
+        val objectGenerators: Map<GraphObject, ActionSequence>,
+        val rootSequence: List<ActionSequence>
+    )
+
+    class ConcreteMapping(val mapping: Map<ObjectDescriptor, GraphObject>, val terms: Map<Term, Descriptor>)
+
+    inner class ConcreteMapper(val ctx: ExecutionContext, val activeObjectDesc: Set<ObjectDescriptor>) {
+        fun findMapping(
+            mapping: Map<ObjectDescriptor, GraphObject>,
+            reverseMapping: Map<GraphObject, ObjectDescriptor>
+        ): ConcreteMapping? {
+            val descriptor = activeObjectDesc.firstOrNull { !mapping.containsKey(it) }
+            if (descriptor == null) {
+                var concretePredicateState = predicateState
+                for ((desc, obj) in mapping) {
+                    for ((field, value) in obj.primitiveFields) {
+                        val concreteField = desc.fields[field] ?: continue
+                        concreteField as ConstantDescriptor
+                        concretePredicateState =
+                            concretePredicateState.addPredicate(state { value equality concreteField.term })
+                        concretePredicateState += concreteField.query
+                    }
+                }
+                val result = runBlocking {
+                    AsyncSMTProxySolver(ctx).use {
+                        it.isPathPossibleAsync(concretePredicateState, emptyState())
+                    }
+                }
+                if (result !is Result.SatResult) {
+                    return null
+                }
+                val reanimator = FinalDescriptorReanimator(result.model, ctx)
+                val terms = terms.associateWith { reanimator.reanimate(it) }
+//                println("Concrete Predicate State: $concretePredicateState")
+                return ConcreteMapping(mapping, terms)
+            }
+            for (mapTo in activeObjects.filter { !reverseMapping.containsKey(it) }) {
+                val newMapping = mapping.toMutableMap()
+                val newReverseMapping = reverseMapping.toMutableMap()
+                if (!tryAddMapping(newMapping, newReverseMapping, descriptor, mapTo)) {
+                    continue
+                }
+                findMapping(newMapping, newReverseMapping)?.let { return it }
+            }
+            return null
+        }
+
+        private fun tryAddMapping(
+            mapping: MutableMap<ObjectDescriptor, GraphObject>,
+            reverseMapping: MutableMap<GraphObject, ObjectDescriptor>,
+            desc: ObjectDescriptor,
+            mapTo: GraphObject,
+        ): Boolean {
+            if (desc.type != mapTo.type || (desc in activeObjectDesc) != (mapTo in activeObjects)) {
+                return false
+            }
+            mapping[desc] = mapTo
+            reverseMapping[mapTo] = desc
+            for ((field, value) in desc.fields) {
+                when (field.second) {
+                    is KexNull, is KexClass -> {}
+                    else -> continue
+                }
+                val otherValue = mapTo.objectFields.getValue(field)
+                if (value == ConstantDescriptor.Null) {
+                    if (otherValue.type !is KexNull) {
+                        return false
+                    }
+                    continue
+                }
+                value as ObjectDescriptor
+                val map1 = mapping[value]
+                val map2 = reverseMapping[otherValue]
+                if (map1 == null && map2 == null) {
+                    if (!tryAddMapping(mapping, reverseMapping, value, otherValue)) {
+                        return false
+                    }
+                } else if (map1 != otherValue && map2 != value) {
+                    return false
+                }
+            }
+            return true
+        }
+    }
 }

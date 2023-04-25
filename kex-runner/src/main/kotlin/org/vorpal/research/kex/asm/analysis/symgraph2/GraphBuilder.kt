@@ -9,8 +9,9 @@ import org.vorpal.research.kex.asm.analysis.symgraph2.heapstate.EmptyHeapState
 import org.vorpal.research.kex.asm.analysis.symgraph2.heapstate.HeapState
 import org.vorpal.research.kex.asm.analysis.symgraph2.heapstate.InvocationResultHeapState
 import org.vorpal.research.kex.asm.analysis.symgraph2.heapstate.UnionHeapState
-import org.vorpal.research.kex.ktype.KexClass
+import org.vorpal.research.kex.descriptor.ObjectDescriptor
 import org.vorpal.research.kex.ktype.kexType
+import org.vorpal.research.kex.reanimator.actionsequence.ActionSequence
 import org.vorpal.research.kex.smt.AsyncSMTProxySolver
 import org.vorpal.research.kex.smt.Result
 import org.vorpal.research.kex.state.*
@@ -97,6 +98,7 @@ class GraphBuilder(val ctx: ExecutionContext, private val klass: Class) : TermBu
         val reverseMapping = namedTerms.toList().associate { it.second to it.first }
 //        println("${p.objects} $namedTerms $predicateState")
         p.objects.forEach { it.remapTerms(namedTerms) }
+        check(state.terms.all { it in namedTerms })
 //        println("after ${p.objects}")
         return InvocationResultHeapState(
             p.objects,
@@ -105,6 +107,8 @@ class GraphBuilder(val ctx: ExecutionContext, private val klass: Class) : TermBu
             absCall,
             state,
             reverseMapping,
+            p.activeObjectsMapping,
+            p.returnValue
         )
     }
 
@@ -153,10 +157,15 @@ class GraphBuilder(val ctx: ExecutionContext, private val klass: Class) : TermBu
         mappingOldToNew: Map<GraphObject, GraphObject>,
         termsNewToOld: Map<Term, Term>,
         mappedNewPredicateState: PredicateState,
-    ): HeapState {
+    ): UnionHeapState {
         val unionPredicateState = ChoiceState(listOf(oldState.predicateState, mappedNewPredicateState))
         val termsOldToNew = termsNewToOld.asSequence().associate { it.value to it.key }
-        return UnionHeapState(unionPredicateState, oldState, newState, mappingOldToNew, termsOldToNew)
+        val terms = buildSet {
+            addAll(oldState.terms)
+            addAll(newState.terms)
+            removeAll(termsOldToNew.values)
+        }
+        return UnionHeapState(unionPredicateState, terms, oldState, newState, mappingOldToNew, termsOldToNew)
     }
 
     private inner class AbsCallGenerator(val state: HeapState, val m: Method) {
@@ -229,5 +238,22 @@ class GraphBuilder(val ctx: ExecutionContext, private val klass: Class) : TermBu
             }
             println("Took ${time}ms")
         }
+    }
+
+    fun restoreActionSequences(objectDescriptors: Set<ObjectDescriptor>): Pair<List<ActionSequence>, Map<ObjectDescriptor, ActionSequence>>? {
+        val (state, result) = allStates.map { state ->
+            state.getMappingToConcreteOrNull(ctx, objectDescriptors)?.let { state to it }
+        }.firstOrNull { it != null } ?: return null
+        return result
+//        val mapping = result.mapping
+//        val stateEnumeration = allStates.withIndex().associate { (index, state) -> state to index }
+//        return buildString {
+//            appendLine("Found mapping")
+//            appendLine(state.toString(stateEnumeration))
+//            appendLine(objectDescriptors)
+//            appendLine(mapping.mapping.mapKeys { it.key.term }.mapValues { state.getObjectIndex(it.value) })
+//            appendLine(mapping.terms)
+//            appendLine(result.callList)
+//        }
     }
 }
