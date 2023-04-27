@@ -225,7 +225,7 @@ abstract class HeapState(
         }
         val concreteMapper = ConcreteMapper(ctx, objectDescriptors)
         val mapping = concreteMapper.findMapping(emptyMap(), emptyMap()) ?: return null
-        val result = restoreCalls(ctx, mapping)
+        val result = restoreCalls(ctx, mapping.terms)
         val objectGenerators = objectDescriptors.associateWith { descriptor ->
             val graphObject = mapping.mapping.getValue(descriptor)
             val actionSequence = result.objectGenerators.getValue(graphObject)
@@ -234,7 +234,7 @@ abstract class HeapState(
         return result.rootSequence to objectGenerators
     }
 
-    abstract suspend fun restoreCalls(ctx: ExecutionContext, mapping: ConcreteMapping): RestorationResult
+    abstract suspend fun restoreCalls(ctx: ExecutionContext, termValues: Map<Term, Descriptor>): RestorationResult
 
     suspend fun checkPredicateState(ctx: ExecutionContext, terms: Map<Term, Descriptor>): Boolean {
         var concretePredicateState = predicateState

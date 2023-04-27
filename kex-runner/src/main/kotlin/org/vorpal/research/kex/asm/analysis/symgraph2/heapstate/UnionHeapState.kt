@@ -2,10 +2,9 @@ package org.vorpal.research.kex.asm.analysis.symgraph2.heapstate
 
 import org.vorpal.research.kex.ExecutionContext
 import org.vorpal.research.kex.asm.analysis.symgraph2.GraphObject
+import org.vorpal.research.kex.descriptor.Descriptor
 import org.vorpal.research.kex.state.PredicateState
 import org.vorpal.research.kex.state.term.Term
-import org.vorpal.research.kex.state.term.ValueTerm
-import org.vorpal.research.kex.state.transformer.collectTerms
 
 class UnionHeapState(
     predicateState: PredicateState,
@@ -26,17 +25,17 @@ class UnionHeapState(
         append(stateEnumeration.getValue(this@UnionHeapState))
     }
 
-    override suspend fun restoreCalls(ctx: ExecutionContext, mapping: ConcreteMapping): RestorationResult {
-        return if (!firstParentState.checkPredicateState(ctx, mapping.terms)) {
-            val secondMapping = mapping.terms.mapKeys { termMappingToSecondParent.getOrDefault(it.key, it.key) }
+    override suspend fun restoreCalls(ctx: ExecutionContext, termValues: Map<Term, Descriptor>): RestorationResult {
+        return if (!firstParentState.checkPredicateState(ctx, termValues)) {
+            val secondMapping = termValues.mapKeys { termMappingToSecondParent.getOrDefault(it.key, it.key) }
             val terms = secondParentState.terms.associateWith { secondMapping.getValue(it) }
             check(secondParentState.checkPredicateState(ctx, terms))
-            val result = secondParentState.restoreCalls(ctx, ConcreteMapping(mapping.mapping, terms))
+            val result = secondParentState.restoreCalls(ctx, termValues)
             val newObjGenerators = result.objectGenerators.mapKeys { objMappingFromSecondParent.getValue(it.key) }
             RestorationResult(newObjGenerators, result.rootSequence)
         } else {
-            val terms = firstParentState.terms.associateWith { mapping.terms.getValue(it) }
-            firstParentState.restoreCalls(ctx, ConcreteMapping(mapping.mapping, terms))
+            val terms = firstParentState.terms.associateWith { termValues.getValue(it) }
+            firstParentState.restoreCalls(ctx, terms)
         }
     }
 }
