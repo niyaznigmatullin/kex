@@ -195,7 +195,7 @@ class MethodAbstractlyInvocator(
         }
     }
 
-    override suspend fun report(inst: Instruction, parameters: Parameters<Descriptor>, testPostfix: String): Boolean {
+    override fun report(inst: Instruction, parameters: Parameters<Descriptor>, testPostfix: String): Boolean {
         return false
     }
 

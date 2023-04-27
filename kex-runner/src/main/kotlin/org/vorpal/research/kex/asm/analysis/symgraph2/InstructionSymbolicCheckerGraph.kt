@@ -25,6 +25,9 @@ class InstructionSymbolicCheckerGraph(
     override val pathSelector: SymbolicPathSelector = DequePathSelector()
     override val callResolver: SymbolicCallResolver = DefaultCallResolver(ctx)
     override val invokeDynamicResolver: SymbolicInvokeDynamicResolver = DefaultCallResolver(ctx)
+    private val tests = mutableListOf<ReportedTest>()
+
+    private data class ReportedTest(val parameters: Parameters<Descriptor>, val testPostfix: String)
 
     companion object {
         @ExperimentalTime
@@ -40,18 +43,19 @@ class InstructionSymbolicCheckerGraph(
             runBlocking(coroutineContext) {
                 withTimeoutOrNull(timeLimit.seconds) {
                     targets.map {
-                        async { InstructionSymbolicCheckerGraph(context, it, graphBuilder).analyze() }
+                        async {
+                            with(InstructionSymbolicCheckerGraph(context, it, graphBuilder)) {
+                                analyze()
+                                generateTests()
+                            }
+                        }
                     }.awaitAll()
                 }
             }
         }
     }
 
-    override suspend fun report(
-        inst: Instruction,
-        parameters: Parameters<Descriptor>,
-        testPostfix: String
-    ): Boolean {
+    suspend fun generateTests() = tests.forEach { (parameters, testPostfix) ->
         val generatorGraph = SymGraphGenerator(
             ctx,
             rootMethod,
@@ -69,14 +73,20 @@ class InstructionSymbolicCheckerGraph(
             generator.generate(parameters)
             generator.emit()
         }
-        return try {
+        try {
             compilerHelper.compileFile(testFile)
-            true
         } catch (e: CompilationException) {
             log.error("Failed to compile test file $testFile")
-            false
         }
-//        return true
+    }
+
+    override fun report(
+        inst: Instruction,
+        parameters: Parameters<Descriptor>,
+        testPostfix: String
+    ): Boolean {
+        tests.add(ReportedTest(parameters, testPostfix))
+        return true
     }
 }
 
