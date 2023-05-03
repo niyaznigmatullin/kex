@@ -136,9 +136,10 @@ class GraphBuilder(val ctx: ExecutionContext, klasses: Set<Class>) : TermBuilder
             val fieldMapping = makeReverseFieldMapping(state, objMap)
             val mappedNewPredicateState = TermRemapper(fieldMapping).apply(newState.predicateState)
             val result = AsyncSMTProxySolver(ctx).use {
-                it.isViolatedAsync(mappedNewPredicateState, state.predicateState)
+//                it.isViolatedAsync(mappedNewPredicateState, state.predicateState)
+                it.definitelyImplies(mappedNewPredicateState, state.predicateState)
             }
-            if (result == Result.UnsatResult) {
+            if (result) {
                 return null to null
             }
             val unionState = merge(state, newState, objMap, fieldMapping, mappedNewPredicateState)

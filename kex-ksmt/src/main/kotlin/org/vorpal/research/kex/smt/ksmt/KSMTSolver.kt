@@ -7,6 +7,7 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.yield
+import org.ksmt.decl.KDecl
 import org.ksmt.expr.KAndBinaryExpr
 import org.ksmt.expr.KAndNaryExpr
 import org.ksmt.expr.KExpr
@@ -41,17 +42,9 @@ import org.vorpal.research.kex.smt.Result
 import org.vorpal.research.kex.smt.SMTModel
 import org.vorpal.research.kex.smt.ksmt.KSMTEngine.asExpr
 import org.vorpal.research.kex.state.PredicateState
-import org.vorpal.research.kex.state.term.ArrayIndexTerm
-import org.vorpal.research.kex.state.term.ArrayLoadTerm
-import org.vorpal.research.kex.state.term.ClassAccessTerm
-import org.vorpal.research.kex.state.term.ConstClassTerm
-import org.vorpal.research.kex.state.term.ConstStringTerm
-import org.vorpal.research.kex.state.term.FieldLoadTerm
-import org.vorpal.research.kex.state.term.FieldTerm
-import org.vorpal.research.kex.state.term.Term
-import org.vorpal.research.kex.state.term.numericValue
-import org.vorpal.research.kex.state.term.term
+import org.vorpal.research.kex.state.term.*
 import org.vorpal.research.kex.state.transformer.collectPointers
+import org.vorpal.research.kex.state.transformer.collectTerms
 import org.vorpal.research.kex.state.transformer.collectVariables
 import org.vorpal.research.kex.state.transformer.memspace
 import org.vorpal.research.kex.util.kapitalize
@@ -64,6 +57,7 @@ import kotlin.math.log2
 import kotlin.reflect.KClass
 import kotlin.reflect.full.declaredMemberProperties
 import kotlin.reflect.jvm.isAccessible
+import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.ExperimentalTime
 
@@ -117,6 +111,56 @@ class KSMTSolver(private val executionContext: ExecutionContext) : AbstractSMTSo
 
     override suspend fun isViolatedAsync(state: PredicateState, query: PredicateState): Result =
         check(state, query) { !it }
+
+    override suspend fun definitelyImplies(from: PredicateState, to: PredicateState): Boolean {
+        val termsFrom = collectTerms(from) { it.isNamed }
+        val termsTo = collectTerms(to) { it.isNamed }
+        val freeTermsTo = buildSet {
+            addAll(termsTo)
+            removeAll(termsFrom)
+        }
+        return definitelyImplies(from, to, freeTermsTo)
+    }
+
+    suspend fun definitelyImplies(
+        firstState: PredicateState,
+        secondBody: PredicateState,
+        secondFreeTerms: Collection<Term>
+    ): Boolean = try {
+        val ctx = KSMTContext(ef)
+        val converter = KSMTConverter(executionContext)
+        converter.init(firstState, ef)
+        converter.init(secondBody, ef)
+        val ksmtFirstState = converter.convert(firstState, ef, ctx)
+        val ksmtSecondBody = converter.convert(secondBody, ef, ctx)
+        val vars = secondFreeTerms.map { converter.convert(it, ef, ctx).expr as KDecl<*> }
+        val quantifier = ef.ctx.mkExistentialQuantifier(ksmtSecondBody.asAxiom() as KExpr<KBoolSort>, vars)
+        val notQuantifier = ef.ctx.mkNot(quantifier)
+        val state = KSMTBool(ef.ctx, ef.ctx.mkAnd(ksmtFirstState.asAxiom() as KExpr<KBoolSort>, notQuantifier))
+        log.debug("Check started")
+        buildSolver().use { solver ->
+            solver.assertAsync(state.asAxiom() as KExpr<KBoolSort>)
+            solver.assertAsync(ef.buildConstClassAxioms().asAxiom() as KExpr<KBoolSort>)
+            log.debug("Running KSMT solver")
+            val result = solver.checkAsync(50.milliseconds)
+            log.debug("Solver finished")
+            result == KSolverStatus.UNSAT
+        }
+    } catch (e: KSolverException) {
+        when (e.cause) {
+            is TimeoutCancellationException -> false
+            is KSolverExecutorTimeoutException -> false
+            else -> {
+                log.warn("KSMT thrown an exception during check", e)
+                throw e
+            }
+        }
+    } catch (e: WorkerInitializationFailedException) {
+        if (e.cause !is TimeoutCancellationException) {
+            log.warn("KSMT thrown an exception during worker initialization", e)
+        }
+        false
+    }
 
     suspend fun check(state: PredicateState, query: PredicateState, queryBuilder: (Bool_) -> Bool_): Result = try {
         if (logQuery) {
