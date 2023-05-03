@@ -51,7 +51,7 @@ class InvocationResultHeapState(
     }
 
     private fun generateMethodCallSequence(
-        termsConcretization: Map<Term, Descriptor>,
+        termValues: Map<Term, Descriptor>,
         actionSequenceGenerator: ConstantGenerator,
         oldObjActions: Map<GraphObject, ActionSequence>,
         name: String,
@@ -60,7 +60,7 @@ class InvocationResultHeapState(
         val arguments = absCall.arguments.map { arg ->
             when (arg) {
                 is PrimitiveArgument -> {
-                    val descriptor = termsConcretization.getValue(arg.term)
+                    val descriptor = termValues.getValue(arg.term)
                     actionSequenceGenerator.generate(descriptor)
                 }
 

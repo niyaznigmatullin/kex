@@ -9,13 +9,13 @@ import org.vorpal.research.kex.state.term.Term
 class UnionHeapState(
     predicateState: PredicateState,
     terms: Set<Term>,
-    val firstParentState: HeapState,
-    val secondParentState: HeapState,
-    val objMappingToSecondParent: Map<GraphObject, GraphObject>,
-    val termMappingToSecondParent: Map<Term, Term>,
+    private val firstParentState: HeapState,
+    private val secondParentState: HeapState,
+    objMappingToSecondParent: Map<GraphObject, GraphObject>,
+    private val termMappingToSecondParent: Map<Term, Term>,
 ) : HeapState(firstParentState.objects, firstParentState.activeObjects, predicateState, terms) {
 
-    val objMappingFromSecondParent = objMappingToSecondParent.map { it.value to it.key }.toMap()
+    private val objMappingFromSecondParent = objMappingToSecondParent.map { it.value to it.key }.toMap()
 
     override fun additionalToString(stateEnumeration: Map<HeapState, Int>): String = buildString {
         append(firstParentState.additionalToString(stateEnumeration))
@@ -28,9 +28,9 @@ class UnionHeapState(
     override suspend fun restoreCalls(ctx: ExecutionContext, termValues: Map<Term, Descriptor>): RestorationResult {
         return if (!firstParentState.checkPredicateState(ctx, termValues)) {
             val secondMapping = termValues.mapKeys { termMappingToSecondParent.getOrDefault(it.key, it.key) }
-            val terms = secondParentState.terms.associateWith { secondMapping.getValue(it) }
-            check(secondParentState.checkPredicateState(ctx, terms))
-            val result = secondParentState.restoreCalls(ctx, termValues)
+            val secondTermValues = secondParentState.terms.associateWith { secondMapping.getValue(it) }
+            check(secondParentState.checkPredicateState(ctx, secondTermValues))
+            val result = secondParentState.restoreCalls(ctx, secondTermValues)
             val newObjGenerators = result.objectGenerators.mapKeys { objMappingFromSecondParent.getValue(it.key) }
             RestorationResult(newObjGenerators, result.rootSequence)
         } else {
