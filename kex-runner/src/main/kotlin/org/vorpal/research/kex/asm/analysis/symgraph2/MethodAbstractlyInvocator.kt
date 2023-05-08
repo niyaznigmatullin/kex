@@ -317,6 +317,7 @@ class MethodAbstractlyInvocator(
         returnDescriptor: Descriptor?
     ) = buildSet {
         addAll(objectDescriptors.filterKeys { activeObjectsBefore.containsKey(it) }.values)
+        add(ConstantDescriptor.Null)
         returnDescriptor?.let<Descriptor, Unit> { add(it) }
     }
 

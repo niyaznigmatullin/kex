@@ -130,24 +130,24 @@ class GraphBuilder(val ctx: ExecutionContext, klasses: Set<Class>) : TermBuilder
     private suspend fun addState(
         newState: HeapState
     ): Pair<HeapState?, HeapState?> {
-        allStates.add(newState)
         for (state in activeStates) {
             val objMap = state.checkIsomorphism(newState) ?: continue
             val fieldMapping = makeReverseFieldMapping(state, objMap)
             val mappedNewPredicateState = TermRemapper(fieldMapping).apply(newState.predicateState)
             val result = AsyncSMTProxySolver(ctx).use {
-//                it.isViolatedAsync(mappedNewPredicateState, state.predicateState)
                 it.definitelyImplies(mappedNewPredicateState, state.predicateState)
             }
             if (result) {
                 return null to null
             }
             val unionState = merge(state, newState, objMap, fieldMapping, mappedNewPredicateState)
+            allStates.add(newState)
             allStates.add(unionState)
             activeStates.remove(state)
             activeStates.add(unionState)
             return unionState to state
         }
+        allStates.add(newState)
         activeStates.add(newState)
         return newState to null
     }
