@@ -2,33 +2,62 @@
 
 package org.vorpal.research.kex.smt.ksmt
 
-import kotlinx.coroutines.*
+import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.yield
+import org.ksmt.decl.KDecl
+import org.ksmt.expr.KAndBinaryExpr
+import org.ksmt.expr.KAndNaryExpr
 import org.ksmt.expr.KExpr
-import org.ksmt.runner.core.*
+import org.ksmt.runner.core.WorkerInitializationFailedException
 import org.ksmt.solver.KModel
+import org.ksmt.solver.KSolver
+import org.ksmt.solver.KSolverConfiguration
 import org.ksmt.solver.KSolverException
 import org.ksmt.solver.KSolverStatus
-import org.ksmt.solver.runner.KSolverRunner
-import org.ksmt.solver.runner.KSolverRunnerManager
+import org.ksmt.solver.portfolio.KPortfolioSolver
+import org.ksmt.solver.portfolio.KPortfolioSolverManager
+import org.ksmt.solver.runner.KSolverExecutorTimeoutException
 import org.ksmt.solver.z3.KZ3Solver
 import org.ksmt.sort.KBoolSort
+import org.ksmt.sort.KBvSort
+import org.ksmt.sort.KSort
+import org.vorpal.research.kex.ExecutionContext
 import org.vorpal.research.kex.config.kexConfig
-import org.vorpal.research.kex.ktype.*
-import org.vorpal.research.kex.smt.*
+import org.vorpal.research.kex.ktype.KexArray
+import org.vorpal.research.kex.ktype.KexInt
+import org.vorpal.research.kex.ktype.KexReference
+import org.vorpal.research.kex.ktype.KexType
+import org.vorpal.research.kex.ktype.isArray
+import org.vorpal.research.kex.ktype.isString
+import org.vorpal.research.kex.ktype.kexType
+import org.vorpal.research.kex.smt.AbstractAsyncSMTSolver
+import org.vorpal.research.kex.smt.AbstractSMTSolver
+import org.vorpal.research.kex.smt.AsyncSolver
+import org.vorpal.research.kex.smt.MemoryShape
+import org.vorpal.research.kex.smt.Solver
+import org.vorpal.research.kex.smt.Result
+import org.vorpal.research.kex.smt.SMTModel
 import org.vorpal.research.kex.smt.ksmt.KSMTEngine.asExpr
 import org.vorpal.research.kex.state.PredicateState
 import org.vorpal.research.kex.state.term.*
 import org.vorpal.research.kex.state.transformer.collectPointers
+import org.vorpal.research.kex.state.transformer.collectTerms
 import org.vorpal.research.kex.state.transformer.collectVariables
 import org.vorpal.research.kex.state.transformer.memspace
-import org.vorpal.research.kfg.type.TypeFactory
+import org.vorpal.research.kex.util.kapitalize
 import org.vorpal.research.kthelper.assert.ktassert
 import org.vorpal.research.kthelper.assert.unreachable
 import org.vorpal.research.kthelper.logging.debug
 import org.vorpal.research.kthelper.logging.log
+import org.vorpal.research.kthelper.tryOrNull
 import kotlin.math.log2
+import kotlin.reflect.KClass
 import kotlin.reflect.full.declaredMemberProperties
 import kotlin.reflect.jvm.isAccessible
+import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.ExperimentalTime
 
@@ -38,15 +67,20 @@ private val logFormulae = kexConfig.getBooleanValue("smt", "logFormulae", false)
 private val printSMTLib = kexConfig.getBooleanValue("smt", "logSMTLib", false)
 private val maxArrayLength = kexConfig.getIntValue("smt", "maxArrayLength", 1000)
 private val ksmtRunners = kexConfig.getIntValue("ksmt", "runners", 4)
+private val ksmtSolvers = kexConfig.getMultipleStringValue("ksmt", "solver")
 
 @Suppress("UNCHECKED_CAST")
 @Solver("ksmt")
 @AsyncSolver("ksmt")
-class KSMTSolver(private val tf: TypeFactory) : AbstractSMTSolver, AbstractAsyncSMTSolver {
+class KSMTSolver(private val executionContext: ExecutionContext) : AbstractSMTSolver, AbstractAsyncSMTSolver {
     companion object {
-        private val solverManager: KSolverRunnerManager by lazy {
-            KSolverRunnerManager(
-                workerPoolSize = ksmtRunners,
+        private val portfolioSolverManager: KPortfolioSolverManager by lazy {
+            KPortfolioSolverManager(
+                solvers = ksmtSolvers.map {
+                    Class.forName("org.ksmt.solver.${it}.K${it.kapitalize()}Solver").kotlin
+                            as KClass<out KSolver<out KSolverConfiguration>>
+                },
+                portfolioPoolSize = ksmtRunners,
                 hardTimeout = timeout.seconds * 2,
                 workerProcessIdleTimeout = 10.seconds,
             )
@@ -78,6 +112,56 @@ class KSMTSolver(private val tf: TypeFactory) : AbstractSMTSolver, AbstractAsync
     override suspend fun isViolatedAsync(state: PredicateState, query: PredicateState): Result =
         check(state, query) { !it }
 
+    override suspend fun definitelyImplies(from: PredicateState, to: PredicateState): Boolean {
+        val termsFrom = collectTerms(from) { it.isNamed }
+        val termsTo = collectTerms(to) { it.isNamed }
+        val freeTermsTo = buildSet {
+            addAll(termsTo)
+            removeAll(termsFrom)
+        }
+        return definitelyImplies(from, to, freeTermsTo)
+    }
+
+    suspend fun definitelyImplies(
+        firstState: PredicateState,
+        secondBody: PredicateState,
+        secondFreeTerms: Collection<Term>
+    ): Boolean = try {
+        val ctx = KSMTContext(ef)
+        val converter = KSMTConverter(executionContext)
+        converter.init(firstState, ef)
+        converter.init(secondBody, ef)
+        val ksmtFirstState = converter.convert(firstState, ef, ctx)
+        val ksmtSecondBody = converter.convert(secondBody, ef, ctx)
+        val vars = secondFreeTerms.map { converter.convert(it, ef, ctx).expr as KDecl<*> }
+        val quantifier = ef.ctx.mkExistentialQuantifier(ksmtSecondBody.asAxiom() as KExpr<KBoolSort>, vars)
+        val notQuantifier = ef.ctx.mkNot(quantifier)
+        val state = KSMTBool(ef.ctx, ef.ctx.mkAnd(ksmtFirstState.asAxiom() as KExpr<KBoolSort>, notQuantifier))
+        log.debug("Check started")
+        buildSolver().use { solver ->
+            solver.assertAsync(state.asAxiom() as KExpr<KBoolSort>)
+            solver.assertAsync(ef.buildConstClassAxioms().asAxiom() as KExpr<KBoolSort>)
+            log.debug("Running KSMT solver")
+            val result = solver.checkAsync(50.milliseconds)
+            log.debug("Solver finished")
+            result == KSolverStatus.UNSAT
+        }
+    } catch (e: KSolverException) {
+        when (e.cause) {
+            is TimeoutCancellationException -> false
+            is KSolverExecutorTimeoutException -> false
+            else -> {
+                log.warn("KSMT thrown an exception during check", e)
+                throw e
+            }
+        }
+    } catch (e: WorkerInitializationFailedException) {
+        if (e.cause !is TimeoutCancellationException) {
+            log.warn("KSMT thrown an exception during worker initialization", e)
+        }
+        false
+    }
+
     suspend fun check(state: PredicateState, query: PredicateState, queryBuilder: (Bool_) -> Bool_): Result = try {
         if (logQuery) {
             log.run {
@@ -89,7 +173,7 @@ class KSMTSolver(private val tf: TypeFactory) : AbstractSMTSolver, AbstractAsync
 
         val ctx = KSMTContext(ef)
 
-        val converter = KSMTConverter(tf)
+        val converter = KSMTConverter(executionContext)
         converter.init(state, ef)
         val ksmtState = converter.convert(state, ef, ctx)
         val ksmtQuery = converter.convert(query, ef, ctx)
@@ -103,15 +187,82 @@ class KSMTSolver(private val tf: TypeFactory) : AbstractSMTSolver, AbstractAsync
             KSolverStatus.SAT -> Result.SatResult(collectModel(ctx, result.second as KModel, state))
         }
     } catch (e: KSolverException) {
-        if (e.cause !is TimeoutCancellationException) {
-            log.warn("KSMT thrown an exception during check", e)
+        when (e.cause) {
+            is TimeoutCancellationException -> Result.UnknownResult(e.message ?: "Exception in KSMT")
+            is KSolverExecutorTimeoutException -> Result.UnknownResult(e.message ?: "Exception in KSMT")
+            else -> {
+                log.warn("KSMT thrown an exception during check", e)
+                throw e
+            }
         }
-        Result.UnknownResult(e.message ?: "Exception in KSMT")
     } catch (e: WorkerInitializationFailedException) {
         if (e.cause !is TimeoutCancellationException) {
             log.warn("KSMT thrown an exception during worker initialization", e)
         }
         Result.UnknownResult(e.message ?: "Exception in KSMT")
+    }
+
+
+    @Suppress("unused")
+    private suspend fun reduce(state: Bool_, query: Bool_, errorCondition: (KSolverException) -> Boolean) {
+        var actualState = state
+        var actualQuery = query
+        var currentState = actualState
+        var currentQuery = actualQuery
+        repeat(1000) {
+            currentState = reduce(actualState)
+            currentQuery = reduce(actualQuery)
+            val reproduced = try {
+                check(currentState, currentQuery)
+                false
+            } catch (e: KSolverException) {
+                errorCondition(e)
+            }
+            if (reproduced) {
+                actualState = currentState
+                actualQuery = currentQuery
+            } else {
+                currentState = actualState
+                currentQuery = actualQuery
+            }
+        }
+
+        check(currentState, currentQuery)
+    }
+
+    private fun reduce(expr: Bool_): Bool_ =
+        Bool_(expr.ctx, reduce(expr.expr as KExpr<*>), reduce(expr.axiom as KExpr<*>))
+
+    private fun <T : KSort> reduce(state: KExpr<T>): KExpr<T> = when {
+        state is KAndBinaryExpr -> when (executionContext.random.nextInt(100)) {
+            in 0..2 -> when (executionContext.random.nextBoolean()) {
+                true -> state.lhs
+                else -> state.rhs
+            }
+
+            else -> ef.ctx.mkAnd(reduce(state.lhs), reduce(state.rhs))
+        } as KExpr<T>
+
+        state is KAndNaryExpr -> when (executionContext.random.nextInt(100)) {
+            in 0..2 -> {
+                val nth = executionContext.random.nextInt(state.args.size)
+                ef.ctx.mkAnd(state.args.filterIndexed { index, _ -> index != nth })
+            }
+
+            else -> ef.ctx.mkAnd(state.args.map { reduce(it) })
+        } as KExpr<T>
+
+        state.sort is KBoolSort -> when (executionContext.random.nextInt(100)) {
+            in 0..2 -> ef.ctx.mkBool(executionContext.random.nextBoolean())
+            else -> state
+        } as KExpr<T>
+
+        state.sort is KBvSort -> when (executionContext.random.nextInt(100)) {
+            in 0..2 -> ef.ctx.mkBv(executionContext.random.nextInt(100), state.sort as KBvSort)
+            else -> state
+        } as KExpr<T>
+
+        else -> state
     }
 
     private suspend fun check(state: Bool_, query: Bool_): Pair<KSolverStatus, Any> = buildSolver().use { solver ->
@@ -122,20 +273,14 @@ class KSMTSolver(private val tf: TypeFactory) : AbstractSMTSolver, AbstractAsync
             }
         }
 
-        solver.assertAsync(state.asAxiom() as KExpr<KBoolSort>)
-        solver.assertAsync(ef.buildConstClassAxioms().asAxiom() as KExpr<KBoolSort>)
-        solver.assertAsync(query.axiom as KExpr<KBoolSort>)
-        solver.assertAsync(query.expr as KExpr<KBoolSort>)
-
-        log.debug("Running KSMT solver")
         if (printSMTLib) {
             log.debug("SMTLib formula:")
             log.debug(
                 KZ3Solver(ef.ctx).use {
                     it.assert(state.asAxiom() as KExpr<KBoolSort>)
                     it.assert(ef.buildConstClassAxioms().asAxiom() as KExpr<KBoolSort>)
-                    it.assert(query.axiom)
-                    it.assert(query.expr)
+                    it.assert(query.axiom as KExpr<KBoolSort>)
+                    it.assert(query.expr as KExpr<KBoolSort>)
 
                     val solverProp = KZ3Solver::class.declaredMemberProperties.first { prop -> prop.name == "solver" }
                     solverProp.isAccessible = true
@@ -144,6 +289,12 @@ class KSMTSolver(private val tf: TypeFactory) : AbstractSMTSolver, AbstractAsync
                 }
             )
         }
+
+        solver.assertAsync(state.asAxiom() as KExpr<KBoolSort>)
+        solver.assertAsync(ef.buildConstClassAxioms().asAxiom() as KExpr<KBoolSort>)
+        solver.assertAsync(query.axiom as KExpr<KBoolSort>)
+        solver.assertAsync(query.expr as KExpr<KBoolSort>)
+        log.debug("Running KSMT solver")
         val result = solver.checkAsync(timeout.seconds)
         log.debug("Solver finished")
 
@@ -161,16 +312,16 @@ class KSMTSolver(private val tf: TypeFactory) : AbstractSMTSolver, AbstractAsync
             }
 
             KSolverStatus.UNKNOWN -> {
-                val reason = solver.reasonOfUnknown()
+                val reason = tryOrNull { solver.reasonOfUnknown() } ?: "Solver executor is not alive"
                 log.debug(reason)
                 result to reason
             }
         }
     }
 
-    private suspend fun buildSolver(): KSolverRunner<*> {
+    private suspend fun buildSolver(): KPortfolioSolver {
         if (!currentCoroutineContext().isActive) yield()
-        return solverManager.createSolverAsync(ef.ctx, KZ3Solver::class)
+        return portfolioSolverManager.createPortfolioSolver(ef.ctx)
     }
 
     private fun KSMTContext.recoverBitvectorProperty(
@@ -179,7 +330,7 @@ class KSMTSolver(private val tf: TypeFactory) : AbstractSMTSolver, AbstractAsync
         model: KModel,
         name: String
     ): Pair<Term, Term> {
-        val ptrExpr = KSMTConverter(tf).convert(ptr, ef, this) as? Ptr_
+        val ptrExpr = KSMTConverter(executionContext).convert(ptr, ef, this) as? Ptr_
             ?: unreachable { log.error("Non-ptr expr for pointer $ptr") }
         val startProp = getBitvectorInitialProperty(memspace, name)
         val endProp = getBitvectorProperty(memspace, name)
@@ -200,7 +351,7 @@ class KSMTSolver(private val tf: TypeFactory) : AbstractSMTSolver, AbstractAsync
         model: KModel,
         name: String
     ): Pair<Term, Term> {
-        val ptrExpr = KSMTConverter(tf).convert(ptr, ef, this) as? Ptr_
+        val ptrExpr = KSMTConverter(executionContext).convert(ptr, ef, this) as? Ptr_
             ?: unreachable { log.error("Non-ptr expr for pointer $ptr") }
         val typeSize = KSMTExprFactory.getTypeSize(type)
         val startProp = when (typeSize) {
@@ -230,7 +381,7 @@ class KSMTSolver(private val tf: TypeFactory) : AbstractSMTSolver, AbstractAsync
         name: String
     ): Pair<Term, Term> {
         val kCtx = ctx.factory.ctx
-        val ptrExpr = KSMTConverter(tf).convert(ptr, ef, ctx) as? Ptr_
+        val ptrExpr = KSMTConverter(executionContext).convert(ptr, ef, ctx) as? Ptr_
             ?: unreachable { log.error("Non-ptr expr for pointer $ptr") }
         val modelPtr = KSMTUnlogic.undo(model.eval(ptrExpr.expr.asExpr(kCtx), true), kCtx, model)
 
@@ -251,7 +402,7 @@ class KSMTSolver(private val tf: TypeFactory) : AbstractSMTSolver, AbstractAsync
         name: String
     ): Pair<Term, Term> {
         val kCtx = ctx.factory.ctx
-        val ptrExpr = KSMTConverter(tf).convert(ptr, ef, ctx) as? Ptr_
+        val ptrExpr = KSMTConverter(executionContext).convert(ptr, ef, ctx) as? Ptr_
             ?: unreachable { log.error("Non-ptr expr for pointer $ptr") }
         val modelPtr = KSMTUnlogic.undo(model.eval(ptrExpr.expr.asExpr(kCtx), true), kCtx, model)
 
@@ -271,7 +422,7 @@ class KSMTSolver(private val tf: TypeFactory) : AbstractSMTSolver, AbstractAsync
         }
 
         val assignments = vars.associateWith {
-            val expr = KSMTConverter(tf).convert(it, ef, ctx)
+            val expr = KSMTConverter(executionContext).convert(it, ef, ctx)
             val ksmtExpr = expr.expr
 
             val evaluatedExpr = model.eval(ksmtExpr.asExpr(kCtx), true)
@@ -286,7 +437,10 @@ class KSMTSolver(private val tf: TypeFactory) : AbstractSMTSolver, AbstractAsync
         for ((type, value) in ef.typeMap) {
             val index =
                 when (val actualValue = KSMTUnlogic.undo(value.expr.asExpr(kCtx), kCtx, model)) {
-                    is ConstStringTerm -> term { const(actualValue.value.length - actualValue.value.indexOf('1') - 1) }
+                    is ConstStringTerm -> term {
+                        const(actualValue.value.length - actualValue.value.indexOf('1') - 1)
+                    }
+
                     else -> term { const(log2(actualValue.numericValue.toDouble()).toInt()) }
                 }
             typeMap[index] = type.kexType
@@ -299,9 +453,9 @@ class KSMTSolver(private val tf: TypeFactory) : AbstractSMTSolver, AbstractAsync
             when (ptr) {
                 is ArrayLoadTerm -> {}
                 is ArrayIndexTerm -> {
-                    val arrayPtrExpr = KSMTConverter(tf).convert(ptr.arrayRef, ef, ctx) as? Ptr_
+                    val arrayPtrExpr = KSMTConverter(executionContext).convert(ptr.arrayRef, ef, ctx) as? Ptr_
                         ?: unreachable { log.error("Non-ptr expr for pointer $ptr") }
-                    val indexExpr = KSMTConverter(tf).convert(ptr.index, ef, ctx) as? Int_
+                    val indexExpr = KSMTConverter(executionContext).convert(ptr.index, ef, ctx) as? Int_
                         ?: unreachable { log.error("Non integer expr for index in $ptr") }
 
                     val modelPtr = KSMTUnlogic.undo(
@@ -366,7 +520,7 @@ class KSMTSolver(private val tf: TypeFactory) : AbstractSMTSolver, AbstractAsync
                     val startMem = ctx.getWordInitialMemory(memspace)
                     val endMem = ctx.getWordMemory(memspace)
 
-                    val ptrExpr = KSMTConverter(tf).convert(ptr, ef, ctx) as? Ptr_
+                    val ptrExpr = KSMTConverter(executionContext).convert(ptr, ef, ctx) as? Ptr_
                         ?: unreachable { log.error("Non-ptr expr for pointer $ptr") }
 
                     val startV = startMem.load(ptrExpr)
@@ -434,9 +588,9 @@ class KSMTSolver(private val tf: TypeFactory) : AbstractSMTSolver, AbstractAsync
         for (ptr in indices) {
             ptr as ArrayIndexTerm
             val memspace = ptr.arrayRef.memspace
-            val arrayPtrExpr = KSMTConverter(tf).convert(ptr.arrayRef, ef, ctx) as? Ptr_
+            val arrayPtrExpr = KSMTConverter(executionContext).convert(ptr.arrayRef, ef, ctx) as? Ptr_
                 ?: unreachable { log.error("Non-ptr expr for pointer $ptr") }
-            val indexExpr = KSMTConverter(tf).convert(ptr.index, ef, ctx) as? Int_
+            val indexExpr = KSMTConverter(executionContext).convert(ptr.index, ef, ctx) as? Int_
                 ?: unreachable { log.error("Non integer expr for index in $ptr") }
 
             val modelPtr =

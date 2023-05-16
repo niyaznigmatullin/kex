@@ -5,16 +5,36 @@ import org.vorpal.research.kex.BaseType
 import org.vorpal.research.kex.InheritanceInfo
 import org.vorpal.research.kex.InheritorOf
 import org.vorpal.research.kex.util.getKexRuntime
-import org.vorpal.research.kfg.Package
+import org.vorpal.research.kex.util.javaString
 import org.vorpal.research.kfg.ir.Method
-import org.vorpal.research.kfg.type.*
+import org.vorpal.research.kfg.type.ArrayType
+import org.vorpal.research.kfg.type.BoolType
+import org.vorpal.research.kfg.type.ByteType
+import org.vorpal.research.kfg.type.CharType
+import org.vorpal.research.kfg.type.ClassType
+import org.vorpal.research.kfg.type.DoubleType
+import org.vorpal.research.kfg.type.FloatType
+import org.vorpal.research.kfg.type.LongType
+import org.vorpal.research.kfg.type.NullType
+import org.vorpal.research.kfg.type.Integer
+import org.vorpal.research.kfg.type.Real
+import org.vorpal.research.kfg.type.Reference
+import org.vorpal.research.kfg.type.ShortType
+import org.vorpal.research.kfg.type.Type
+import org.vorpal.research.kfg.type.TypeFactory
+import org.vorpal.research.kfg.type.VoidType
+import org.vorpal.research.kfg.type.objectType
 import org.vorpal.research.kfg.util.Flags
 import org.vorpal.research.kthelper.assert.ktassert
 import org.vorpal.research.kthelper.assert.unreachable
 import org.vorpal.research.kthelper.logging.log
+import ru.spbstu.wheels.mapToArray
 import kotlin.reflect.KClass
 import org.vorpal.research.kfg.ir.Class as KfgClass
+import org.vorpal.research.kfg.ir.Method as KfgMethod
+import org.vorpal.research.kfg.ir.Field as KfgField
 
+@Suppress("unused", "RecursivePropertyAccessor")
 object KexRtManager {
     private val rt2KexMapping: Map<String, String>
     private val kex2RtMapping: Map<String, String>
@@ -34,66 +54,127 @@ object KexRtManager {
     val String.rtUnmapped get() = kex2RtMapping.getOrDefault(this, this)
 
     val KfgClass.rtMapped get() = cm[rt2KexMapping.getOrDefault(fullName, fullName)]
-    val Type.rtMapped: Type get() = when (this) {
-        is ClassType -> this.klass.rtMapped.type
-        is ArrayType -> ArrayType(component.rtMapped)
-        else -> this
-    }
+
+    val KfgMethod.rtMapped
+        get() = when {
+            this.klass.inKexRt -> this.klass.rtMapped.getMethod(
+                this.name,
+                this.returnType.rtMapped,
+                *this.argTypes.mapToArray { it.rtMapped }
+            )
+            else -> this
+        }
+
+    val KfgField.rtMapped
+        get() = when {
+            this.klass.inKexRt -> this.klass.rtMapped.getField(this.name, this.type.rtMapped)
+            else -> this
+        }
+
+    val Type.rtMapped: Type
+        get() = when (this) {
+            is ClassType -> this.klass.rtMapped.asType
+            is ArrayType -> ArrayType(component.rtMapped)
+            else -> this
+        }
 
     val KfgClass.rtUnmapped get() = cm[kex2RtMapping.getOrDefault(fullName, fullName)]
-    val Type.rtUnmapped: Type get() = when (this) {
-        is ClassType -> this.klass.rtUnmapped.type
-        is ArrayType -> ArrayType(component.rtUnmapped)
-        else -> this
-    }
 
-    val KexType.rtMapped: KexType get() = when (this) {
-        is KexClass -> KexClass(rt2KexMapping.getOrDefault(klass, klass))
-        is KexReference -> KexReference(reference.rtMapped)
-        is KexArray -> KexArray(element.rtMapped)
-        else -> this
-    }
+    val KfgMethod.rtUnmapped
+        get() = this.klass.rtUnmapped.getMethod(
+            this.name,
+            this.returnType.rtUnmapped,
+            *this.argTypes.mapToArray { it.rtUnmapped }
+        )
 
-    val KexType.rtUnmapped: KexType get() = when (this) {
-        is KexClass -> KexClass(kex2RtMapping.getOrDefault(klass, klass))
-        is KexReference -> KexReference(reference.rtUnmapped)
-        is KexArray -> KexArray(element.rtUnmapped)
-        else -> this
-    }
+    val KfgField.rtUnmapped
+        get() = this.klass.rtUnmapped.getField(this.name, this.type.rtUnmapped)
+
+    val Type.rtUnmapped: Type
+        get() = when (this) {
+            is ClassType -> this.klass.rtUnmapped.asType
+            is ArrayType -> ArrayType(component.rtUnmapped)
+            else -> this
+        }
+
+    val KexType.rtMapped: KexType
+        get() = when (this) {
+            is KexClass -> KexClass(rt2KexMapping.getOrDefault(klass, klass))
+            is KexReference -> KexReference(reference.rtMapped)
+            is KexArray -> KexArray(element.rtMapped)
+            else -> this
+        }
+
+    val KexType.rtUnmapped: KexType
+        get() = when (this) {
+            is KexClass -> KexClass(kex2RtMapping.getOrDefault(klass, klass))
+            is KexReference -> KexReference(reference.rtUnmapped)
+            is KexArray -> KexArray(element.rtUnmapped)
+            else -> this
+        }
 
 
     val KfgClass.isKexRt get() = fullName in kex2RtMapping
-    val Type.isKexRt: Boolean get() = when (this) {
-        is ClassType -> this.klass.isKexRt
-        is ArrayType -> component.isKexRt
-        else -> false
-    }
-    val KexType.isKexRt: Boolean get() = when (this) {
-        is KexClass -> klass in kex2RtMapping
-        is KexReference -> reference.isKexRt
-        is KexArray -> element.isKexRt
-        else -> false
-    }
+
+    val Type.isKexRt: Boolean
+        get() = when (this) {
+            is ClassType -> this.klass.isKexRt
+            is ArrayType -> component.isKexRt
+            else -> false
+        }
+    val KexType.isKexRt: Boolean
+        get() = when (this) {
+            is KexClass -> klass in kex2RtMapping
+            is KexReference -> reference.isKexRt
+            is KexArray -> element.isKexRt
+            else -> false
+        }
+
+    @Suppress("MemberVisibilityCanBePrivate")
+    val KfgClass.inKexRt get() = fullName in rt2KexMapping
+
+    @Suppress("MemberVisibilityCanBePrivate")
+    val Type.inKexRt: Boolean
+        get() = when (this) {
+            is ClassType -> this.klass.inKexRt
+            is ArrayType -> component.inKexRt
+            else -> false
+        }
+
+    @Suppress("MemberVisibilityCanBePrivate")
+    val KexType.inKexRt: Boolean
+        get() = when (this) {
+            is KexClass -> klass in rt2KexMapping
+            is KexReference -> reference.inKexRt
+            is KexArray -> element.inKexRt
+            else -> false
+        }
 
 
     val KfgClass.isJavaRt get() = rt2KexMapping.any { fullName.startsWith(it.key) }
-    val Type.isJavaRt: Boolean get() = when (this) {
-        is ClassType -> this.klass.isJavaRt
-        is ArrayType -> component.isJavaRt
-        else -> false
-    }
-    val KexType.isJavaRt: Boolean get() = when (this) {
-        is KexClass -> rt2KexMapping.any { klass.startsWith(it.key) }
-        is KexReference -> reference.isJavaRt
-        is KexArray -> element.isJavaRt
-        else -> false
-    }
+
+    @Suppress("unused")
+    val Type.isJavaRt: Boolean
+        get() = when (this) {
+            is ClassType -> this.klass.isJavaRt
+            is ArrayType -> component.isJavaRt
+            else -> false
+        }
+    val KexType.isJavaRt: Boolean
+        get() = when (this) {
+            is KexClass -> rt2KexMapping.any { klass.startsWith(it.key) }
+            is KexReference -> reference.isJavaRt
+            is KexArray -> element.isJavaRt
+            else -> false
+        }
 
     val Method.isKexRt: Boolean get() = klass.isKexRt
 }
 
 val Type.kexType get() = KexType.fromType(this)
 val KfgClass.kexType get() = KexType.fromClass(this)
+
+@Deprecated("replace with built in properties", replaceWith = ReplaceWith(".asType"))
 val KfgClass.type get() = this.cm.type.getRefType(this.fullName)
 
 private val KexInteger.actualBitSize
@@ -169,17 +250,20 @@ abstract class KexType {
                 is LongType -> KexLong
                 else -> KexInt
             }
+
             is Real -> when (type) {
                 is FloatType -> KexFloat
                 is DoubleType -> KexDouble
                 else -> unreachable { log.error("Unknown real type: $type") }
             }
+
             is Reference -> when (type) {
                 is ClassType -> KexClass(type.klass.fullName)
                 is ArrayType -> KexArray(fromType(type.component))
                 is NullType -> KexNull()
                 else -> unreachable { log.error("Unknown reference type: $type") }
             }
+
             is VoidType -> KexVoid
             else -> unreachable { log.error("Unknown type: $type") }
         }
@@ -188,7 +272,7 @@ abstract class KexType {
     }
 
     abstract val name: String
-    val javaName get() = name.replace(Package.SEPARATOR, Package.CANONICAL_SEPARATOR)
+    val javaName get() = name.javaString
     abstract val bitSize: Int
 
     abstract fun getKfgType(types: TypeFactory): Type
@@ -211,8 +295,7 @@ object KexVoid : KexType() {
     override fun hashCode() = name.hashCode()
     override fun equals(other: Any?): Boolean {
         if (this === other) return true
-        if (other !is KexVoid) return false
-        return true
+        return other is KexVoid
     }
 }
 

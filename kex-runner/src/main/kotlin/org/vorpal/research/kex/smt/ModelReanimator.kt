@@ -2,9 +2,40 @@ package org.vorpal.research.kex.smt
 
 import org.vorpal.research.kex.ExecutionContext
 import org.vorpal.research.kex.asm.manager.instantiationManager
-import org.vorpal.research.kex.descriptor.*
-import org.vorpal.research.kex.ktype.*
-import org.vorpal.research.kex.state.term.*
+import org.vorpal.research.kex.descriptor.ArrayDescriptor
+import org.vorpal.research.kex.descriptor.Descriptor
+import org.vorpal.research.kex.descriptor.FieldContainingDescriptor
+import org.vorpal.research.kex.descriptor.ObjectDescriptor
+import org.vorpal.research.kex.descriptor.descriptor
+import org.vorpal.research.kex.ktype.KexArray
+import org.vorpal.research.kex.ktype.KexBool
+import org.vorpal.research.kex.ktype.KexByte
+import org.vorpal.research.kex.ktype.KexChar
+import org.vorpal.research.kex.ktype.KexClass
+import org.vorpal.research.kex.ktype.KexDouble
+import org.vorpal.research.kex.ktype.KexFloat
+import org.vorpal.research.kex.ktype.KexInt
+import org.vorpal.research.kex.ktype.KexLong
+import org.vorpal.research.kex.ktype.KexNull
+import org.vorpal.research.kex.ktype.KexPointer
+import org.vorpal.research.kex.ktype.KexReference
+import org.vorpal.research.kex.ktype.KexShort
+import org.vorpal.research.kex.ktype.KexType
+import org.vorpal.research.kex.ktype.isJavaClass
+import org.vorpal.research.kex.ktype.isString
+import org.vorpal.research.kex.state.term.ArrayIndexTerm
+import org.vorpal.research.kex.state.term.ClassAccessTerm
+import org.vorpal.research.kex.state.term.ConstBoolTerm
+import org.vorpal.research.kex.state.term.ConstClassTerm
+import org.vorpal.research.kex.state.term.ConstDoubleTerm
+import org.vorpal.research.kex.state.term.ConstFloatTerm
+import org.vorpal.research.kex.state.term.ConstIntTerm
+import org.vorpal.research.kex.state.term.ConstStringTerm
+import org.vorpal.research.kex.state.term.FieldTerm
+import org.vorpal.research.kex.state.term.StaticClassRefTerm
+import org.vorpal.research.kex.state.term.Term
+import org.vorpal.research.kex.state.term.numericValue
+import org.vorpal.research.kex.state.term.term
 import org.vorpal.research.kex.state.transformer.memspace
 import org.vorpal.research.kex.util.getActualField
 import org.vorpal.research.kex.util.isFinal
@@ -22,7 +53,6 @@ private val Term.isPointer get() = this.type is KexPointer
 private val Term.isPrimitive get() = !this.isPointer
 
 interface ModelReanimator<T> {
-    val method: Method
     val model: SMTModel
     val context: ExecutionContext
 
@@ -79,7 +109,6 @@ interface ModelReanimator<T> {
 }
 
 class ObjectReanimator(
-    override val method: Method,
     override val model: SMTModel,
     override val context: ExecutionContext
 ) : ModelReanimator<Any?> {
@@ -217,7 +246,7 @@ class ObjectReanimator(
                         val type = objectRef.type as? KexClass
                             ?: unreachable { log.error("Cannot cast ${objectRef.type} to class") }
 
-                        val kfgClass = method.cm[type.klass]
+                        val kfgClass = context.cm[type.klass]
                         val `class` = tryOrNull { loader.loadClass(kfgClass.canonicalDesc) } ?: return null
                         val instance = memory(objectRef.memspace, objectAddr) ?: return null
                         instance to `class`
@@ -336,7 +365,6 @@ class ObjectReanimator(
 
 
 abstract class DescriptorReanimator(
-    override val method: Method,
     override val model: SMTModel,
     override val context: ExecutionContext
 ) : ModelReanimator<Descriptor> {
@@ -604,8 +632,8 @@ abstract class DescriptorReanimator(
     }
 }
 
-class FinalDescriptorReanimator(method: Method, model: SMTModel, context: ExecutionContext) :
-    DescriptorReanimator(method, model, context) {
+class FinalDescriptorReanimator(model: SMTModel, context: ExecutionContext) :
+    DescriptorReanimator(model, context) {
     override fun reanimateFromAssignment(term: Term) = model.assignments[term]
     override fun reanimateFromMemory(memspace: Int, addr: Term?) = model.memories[memspace]?.finalMemory?.get(addr)
     override fun reanimateFromProperties(memspace: Int, name: String, addr: Term?) =
@@ -615,8 +643,8 @@ class FinalDescriptorReanimator(method: Method, model: SMTModel, context: Execut
         model.arrays[memspace]?.get(array)?.finalMemory?.get(index)
 }
 
-class InitialDescriptorReanimator(method: Method, model: SMTModel, context: ExecutionContext) :
-    DescriptorReanimator(method, model, context) {
+class InitialDescriptorReanimator(model: SMTModel, context: ExecutionContext) :
+    DescriptorReanimator(model, context) {
     override fun reanimateFromAssignment(term: Term) = model.assignments[term]
     override fun reanimateFromMemory(memspace: Int, addr: Term?) = model.memories[memspace]?.initialMemory?.get(addr)
     override fun reanimateFromProperties(memspace: Int, name: String, addr: Term?) =

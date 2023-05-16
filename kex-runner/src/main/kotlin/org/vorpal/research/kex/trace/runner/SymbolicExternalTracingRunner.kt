@@ -6,8 +6,8 @@ import kotlinx.serialization.InternalSerializationApi
 import org.vorpal.research.kex.ExecutionContext
 import org.vorpal.research.kex.config.kexConfig
 import org.vorpal.research.kex.serialization.KexSerializer
-import org.vorpal.research.kex.trace.symbolic.ExecutionCompletedResult
-import org.vorpal.research.kex.trace.symbolic.ExecutionResult
+import org.vorpal.research.kex.trace.symbolic.protocol.ExecutionCompletedResult
+import org.vorpal.research.kex.trace.symbolic.protocol.ExecutionResult
 import org.vorpal.research.kex.trace.symbolic.protocol.Client2MasterConnection
 import org.vorpal.research.kex.trace.symbolic.protocol.Client2MasterSocketConnection
 import org.vorpal.research.kex.trace.symbolic.protocol.TestExecutionRequest
@@ -31,7 +31,8 @@ internal object ExecutorMasterController : AutoCloseable {
         val tempSocket = ServerSocket(0)
         masterPort = tempSocket.localPort
         tempSocket.close()
-        Thread.sleep(1000)
+        // this is fucked up
+        Thread.sleep(2000)
     }
 
     fun start(ctx: ExecutionContext) {
@@ -43,7 +44,7 @@ internal object ExecutorMasterController : AutoCloseable {
         val executorConfigPath = (kexConfig.getPathValue(
             "executor", "executorConfigPath"
         ) ?: Paths.get("kex.ini")).toAbsolutePath()
-        val masterJvmParams = kexConfig.getMultipleStringValue("executor", "masterJvmParams", ",")
+        val masterJvmParams = kexConfig.getMultipleStringValue("executor", "masterJvmParams", ",").toTypedArray()
         val numberOfWorkers = kexConfig.getIntValue("executor", "numberOfWorkers", 1)
         val instrumentedCodeDir = outputDir.resolve(
             kexConfig.getStringValue("output", "instrumentedDir", "instrumented")
@@ -63,7 +64,7 @@ internal object ExecutorMasterController : AutoCloseable {
         val pb = ProcessBuilder(
             "java",
             "-classpath", executorPath.toString(),
-            *masterJvmParams.toTypedArray(),
+            *masterJvmParams,
             executorKlass,
             "--output", "${outputDir.toAbsolutePath()}",
             "--config", "$executorConfigPath",
@@ -74,6 +75,7 @@ internal object ExecutorMasterController : AutoCloseable {
         )
         log.debug("Starting executor master process with command: '${pb.command().joinToString(" ")}'")
         process = pb.start()
+        Thread.sleep(1000)
     }
 
     fun getClientConnection(ctx: ExecutionContext): Client2MasterConnection {

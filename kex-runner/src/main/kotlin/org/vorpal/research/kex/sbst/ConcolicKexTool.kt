@@ -74,7 +74,7 @@ class ConcolicKexTool : Tool {
             cm.initialize(jar)
             val context = ExecutionContext(
                 cm,
-                target,
+//                target,
                 containerClassLoader,
                 EasyRandomDriver(),
                 klassPath
@@ -124,7 +124,7 @@ class ConcolicKexTool : Tool {
         val klassPath = containers.map { it.path }
         updateClassPath(classLoader)
         val randomDriver = EasyRandomDriver()
-        context = ExecutionContext(cm, Package.defaultPackage, classLoader, randomDriver, klassPath, accessLevel)
+        context = ExecutionContext(cm, /*Package.defaultPackage, */classLoader, randomDriver, klassPath, accessLevel)
 
         log.debug("Running with class path:\n${containers.joinToString("\n") { it.name }}")
     }
@@ -153,7 +153,7 @@ class ConcolicKexTool : Tool {
         }
     }
 
-    override fun finalize() {
+    override fun finalize_() {
         clearClassPath()
     }
 }

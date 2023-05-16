@@ -11,11 +11,39 @@ import org.vorpal.research.kex.state.term.ArgumentTerm
 import org.vorpal.research.kex.state.term.FieldTerm
 import org.vorpal.research.kex.state.term.Term
 import org.vorpal.research.kex.state.term.ValueTerm
-import org.vorpal.research.kex.state.transformer.*
+import org.vorpal.research.kex.state.transformer.AnnotationAdapter
+import org.vorpal.research.kex.state.transformer.BoolTypeAdapter
+import org.vorpal.research.kex.state.transformer.ClassAdapter
+import org.vorpal.research.kex.state.transformer.ClassMethodAdapter
+import org.vorpal.research.kex.state.transformer.ConcolicArrayLengthAdapter
+import org.vorpal.research.kex.state.transformer.ConcolicInliner
+import org.vorpal.research.kex.state.transformer.ConstEnumAdapter
+import org.vorpal.research.kex.state.transformer.ConstStringAdapter
+import org.vorpal.research.kex.state.transformer.ConstantPropagator
+import org.vorpal.research.kex.state.transformer.EqualsTransformer
+import org.vorpal.research.kex.state.transformer.FieldNormalizer
+import org.vorpal.research.kex.state.transformer.IntrinsicAdapter
+import org.vorpal.research.kex.state.transformer.KexIntrinsicsAdapter
+import org.vorpal.research.kex.state.transformer.KexRtAdapter
+import org.vorpal.research.kex.state.transformer.NewFieldInitializer
+import org.vorpal.research.kex.state.transformer.Optimizer
+import org.vorpal.research.kex.state.transformer.RecursiveInliner
+import org.vorpal.research.kex.state.transformer.ReflectionInfoAdapter
+import org.vorpal.research.kex.state.transformer.Slicer
+import org.vorpal.research.kex.state.transformer.StensgaardAA
+import org.vorpal.research.kex.state.transformer.StringMethodAdapter
+import org.vorpal.research.kex.state.transformer.TermCollector
+import org.vorpal.research.kex.state.transformer.transform
+import org.vorpal.research.kex.state.transformer.TypeInfoMap
+import org.vorpal.research.kex.state.transformer.TypeNameAdapter
+import org.vorpal.research.kex.state.transformer.collectRequiredTerms
+import org.vorpal.research.kex.state.transformer.collectVariables
+import org.vorpal.research.kex.state.transformer.toTypeMap
 import org.vorpal.research.kfg.ir.Method
 import org.vorpal.research.kthelper.logging.debug
 import org.vorpal.research.kthelper.logging.log
 
+@Suppress("MemberVisibilityCanBePrivate")
 class AsyncChecker(
     val method: Method,
     val ctx: ExecutionContext,
@@ -24,13 +52,12 @@ class AsyncChecker(
     private val logQuery = kexConfig.getBooleanValue("smt", "logQuery", false)
     private val psa = PredicateStateAnalysis(ctx.cm)
 
-    private val loader get() = ctx.loader
     lateinit var state: PredicateState
         private set
     lateinit var query: PredicateState
         private set
 
-    private fun prepareState(
+    fun prepareState(
         method: Method,
         state: PredicateState,
         typeMap: TypeInfoMap
@@ -70,8 +97,9 @@ class AsyncChecker(
         +ConstStringAdapter(method.cm.type)
         +StringMethodAdapter(ctx.cm)
         +ConcolicArrayLengthAdapter()
+        +NewFieldInitializer(ctx)
         +FieldNormalizer(method.cm)
-        +TypeNameAdapter(ctx.types)
+        +TypeNameAdapter(ctx)
     }
 
     suspend fun prepareAndCheck(
@@ -79,9 +107,18 @@ class AsyncChecker(
         state: PredicateState,
         typeMap: TypeInfoMap = emptyMap<Term, KexType>().toTypeMap()
     ): Result {
+        return prepareAndCheckWithState(method, state, typeMap).second
+    }
+
+    suspend fun prepareAndCheckWithState(
+        method: Method,
+        state: PredicateState,
+        typeMap: TypeInfoMap = emptyMap<Term, KexType>().toTypeMap()
+    ): Pair<PredicateState, Result> {
         val preparedState = prepareState(method, state, typeMap)
         log.debug { "Prepared state: $preparedState" }
-        return check(preparedState)
+        val result = check(preparedState)
+        return preparedState to result
     }
 
     suspend fun check(ps: PredicateState, qry: PredicateState = emptyState()): Result {
@@ -123,7 +160,7 @@ class AsyncChecker(
             log.debug("Query size: ${query.size}")
         }
 
-        val result = AsyncSMTProxySolver(method.cm.type).use {
+        val result = AsyncSMTProxySolver(ctx).use {
             it.isPathPossibleAsync(state, query)
         }
         log.debug("Acquired $result")

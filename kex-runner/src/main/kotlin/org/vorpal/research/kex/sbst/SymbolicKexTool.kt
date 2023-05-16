@@ -4,6 +4,7 @@ import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.InternalSerializationApi
 import org.vorpal.research.kex.ExecutionContext
+import org.vorpal.research.kex.asm.analysis.symbolic.InstructionSymbolicChecker
 import org.vorpal.research.kex.asm.analysis.symbolic.SymbolicTraverser
 import org.vorpal.research.kex.asm.manager.ClassInstantiationDetector
 import org.vorpal.research.kex.asm.util.AccessModifier
@@ -70,7 +71,7 @@ class SymbolicKexTool : Tool {
             cm.initialize(jar)
             val context = ExecutionContext(
                 cm,
-                target,
+//                target,
                 containerClassLoader,
                 EasyRandomDriver(),
                 klassPath
@@ -117,7 +118,7 @@ class SymbolicKexTool : Tool {
         val klassPath = containers.map { it.path }
         updateClassPath(classLoader)
         val randomDriver = EasyRandomDriver()
-        context = ExecutionContext(cm, Package.defaultPackage, classLoader, randomDriver, klassPath, accessLevel)
+        context = ExecutionContext(cm, /*Package.defaultPackage, */classLoader, randomDriver, klassPath, accessLevel)
 
         log.debug("Running with class path:\n${containers.joinToString("\n") { it.name }}")
     }
@@ -129,7 +130,7 @@ class SymbolicKexTool : Tool {
         val klass = context.cm[canonicalName]
         log.debug("Running on klass $klass")
         try {
-            SymbolicTraverser.run(context, klass.allMethods)
+            InstructionSymbolicChecker.run(context, klass.allMethods)
         } catch (e: Throwable) {
             log.error("Error: ", e)
         }
@@ -137,7 +138,7 @@ class SymbolicKexTool : Tool {
         log.debug("Analyzed klass $klass")
     }
 
-    override fun finalize() {
+    override fun finalize_() {
         clearClassPath()
     }
 }

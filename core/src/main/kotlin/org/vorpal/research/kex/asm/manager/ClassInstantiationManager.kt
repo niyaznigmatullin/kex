@@ -3,16 +3,34 @@ package org.vorpal.research.kex.asm.manager
 import org.vorpal.research.kex.ExecutionContext
 import org.vorpal.research.kex.asm.util.AccessModifier
 import org.vorpal.research.kex.asm.util.accessModifier
-import org.vorpal.research.kex.ktype.*
+import org.vorpal.research.kex.ktype.KexClass
+import org.vorpal.research.kex.ktype.KexReference
 import org.vorpal.research.kex.ktype.KexRtManager.rtMapped
-import org.vorpal.research.kex.util.*
+import org.vorpal.research.kex.ktype.KexType
+import org.vorpal.research.kex.ktype.kexType
+import org.vorpal.research.kex.util.abstractCollectionClass
+import org.vorpal.research.kex.util.abstractListClass
+import org.vorpal.research.kex.util.abstractMapClass
+import org.vorpal.research.kex.util.abstractQueueClass
+import org.vorpal.research.kex.util.abstractSetClass
+import org.vorpal.research.kex.util.abstractStringBuilderClass
+import org.vorpal.research.kex.util.atomicBooleanClass
+import org.vorpal.research.kex.util.atomicIntegerArrayClass
+import org.vorpal.research.kex.util.atomicIntegerClass
+import org.vorpal.research.kex.util.atomicLongArrayClass
+import org.vorpal.research.kex.util.atomicLongClass
+import org.vorpal.research.kex.util.atomicReferenceArrayClass
+import org.vorpal.research.kex.util.atomicReferenceClass
+import org.vorpal.research.kex.util.atomicStampedReferenceClass
+import org.vorpal.research.kex.util.numberClass
 import org.vorpal.research.kfg.ClassManager
 import org.vorpal.research.kfg.ir.Class
 import org.vorpal.research.kfg.ir.ConcreteClass
 import org.vorpal.research.kfg.ir.Method
-import org.vorpal.research.kfg.ir.value.instruction.NewInst
-import org.vorpal.research.kfg.ir.value.instruction.ReturnInst
-import org.vorpal.research.kfg.type.*
+import org.vorpal.research.kfg.type.ArrayType
+import org.vorpal.research.kfg.type.ClassType
+import org.vorpal.research.kfg.type.SystemTypeNames
+import org.vorpal.research.kfg.type.Type
 import org.vorpal.research.kfg.visitor.ClassVisitor
 import org.vorpal.research.kthelper.`try`
 import kotlin.random.Random
@@ -30,7 +48,7 @@ interface ClassInstantiationManager {
     fun get(klass: Class, accessLevel: AccessModifier, excludes: Set<Class>, random: Random): Class
     fun get(type: Type, accessLevel: AccessModifier, excludes: Set<Class>, random: Random): Type =
         when (type) {
-            is ClassType -> get(type.klass, accessLevel, excludes, random).type
+            is ClassType -> get(type.klass, accessLevel, excludes, random).asType
             is ArrayType -> get(type.component, accessLevel, excludes, random).asArray
             else -> type
         }
@@ -54,28 +72,37 @@ private val predefinedConcreteInstanceInfo = with(SystemTypeNames) {
         abstractCollectionClass to setOf(arrayListClass.rtMapped),
         listClass to setOf(arrayListClass.rtMapped),
         abstractListClass to setOf(arrayListClass.rtMapped),
-        queueClass to setOf(arrayListClass.rtMapped),
-        abstractQueueClass to setOf(arrayListClass.rtMapped),
+        queueClass to setOf(linkedListClass.rtMapped),
+        abstractQueueClass to setOf(linkedListClass.rtMapped),
         arrayListClass to setOf(arrayListClass.rtMapped),
-        linkedListClass to setOf(arrayListClass.rtMapped),
+        linkedListClass to setOf(linkedListClass.rtMapped),
+        arrayListClass.rtMapped to setOf(arrayListClass.rtMapped),
+        linkedListClass.rtMapped to setOf(linkedListClass.rtMapped),
         dequeClass to setOf(arrayDequeClass.rtMapped),
+        arrayDequeClass to setOf(arrayDequeClass.rtMapped),
+        arrayDequeClass.rtMapped to setOf(arrayDequeClass.rtMapped),
         setClass to setOf(hashSetClass.rtMapped),
         abstractSetClass to setOf(hashSetClass.rtMapped),
         sortedSetClass to setOf(treeSetClass.rtMapped),
         hashSetClass to setOf(hashSetClass.rtMapped),
         treeSetClass to setOf(treeSetClass.rtMapped),
         navigableSetClass to setOf(treeSetClass.rtMapped),
+        hashSetClass.rtMapped to setOf(hashSetClass.rtMapped),
+        treeSetClass.rtMapped to setOf(treeSetClass.rtMapped),
         mapClass to setOf(hashMapClass.rtMapped),
         abstractMapClass to setOf(hashMapClass.rtMapped),
         sortedMapClass to setOf(treeMapClass.rtMapped),
         navigableMapClass to setOf(treeMapClass.rtMapped),
         hashMapClass to setOf(hashMapClass.rtMapped),
         treeMapClass to setOf(treeMapClass.rtMapped),
+        hashMapClass.rtMapped to setOf(hashMapClass.rtMapped),
+        treeMapClass.rtMapped to setOf(treeMapClass.rtMapped),
         unmodifiableCollection to setOf(unmodifiableList.rtMapped),
         unmodifiableList to setOf(unmodifiableList.rtMapped),
         unmodifiableSet to setOf(unmodifiableSet.rtMapped),
         unmodifiableMap to setOf(unmodifiableMap.rtMapped),
         charSequence to setOf(stringClass.rtMapped),
+        stringClass to setOf(stringClass.rtMapped),
 
         abstractStringBuilderClass to setOf(stringBuilder.rtMapped),
         stringBuilder to setOf(stringBuilder.rtMapped),
@@ -90,9 +117,7 @@ private val predefinedConcreteInstanceInfo = with(SystemTypeNames) {
         longClass to setOf(longClass.rtMapped),
         shortClass to setOf(shortClass.rtMapped),
         numberClass to setOf(
-            booleanClass.rtMapped,
             byteClass.rtMapped,
-            charClass.rtMapped,
             doubleClass.rtMapped,
             floatClass.rtMapped,
             integerClass.rtMapped,
@@ -284,15 +309,7 @@ class ClassInstantiationDetector(
         if (!baseAccessLevel.canAccess(method.klass.accessModifier)) return
         if (!method.isStatic || method.argTypes.any { it.isSubtypeOf(returnType) } || method.isSynthetic) return
 
-        var returnClass = returnType.klass
-        method.body.flatten().firstOrNull { it is ReturnInst }?.let {
-            it as ReturnInst
-            if (it.returnValue is NewInst) {
-                returnClass = (it.returnValue.type as ClassType).klass
-                addInstantiableClass(returnClass, returnClass)
-            }
-        }
-        addExternalCtor(returnClass, method)
+        addExternalCtor(returnType.klass, method)
     }
 
     private fun addInstantiableClass(klass: Class, instantiableKlass: Class) {

@@ -11,12 +11,38 @@ import org.vorpal.research.kfg.ClassManager
 import org.vorpal.research.kfg.ir.BasicBlock
 import org.vorpal.research.kfg.ir.value.IntConstant
 import org.vorpal.research.kfg.ir.value.Value
-import org.vorpal.research.kfg.ir.value.instruction.*
+import org.vorpal.research.kfg.ir.value.instruction.ArrayLoadInst
+import org.vorpal.research.kfg.ir.value.instruction.ArrayStoreInst
+import org.vorpal.research.kfg.ir.value.instruction.BinaryInst
+import org.vorpal.research.kfg.ir.value.instruction.BranchInst
+import org.vorpal.research.kfg.ir.value.instruction.CallInst
+import org.vorpal.research.kfg.ir.value.instruction.CastInst
+import org.vorpal.research.kfg.ir.value.instruction.CatchInst
+import org.vorpal.research.kfg.ir.value.instruction.CmpInst
+import org.vorpal.research.kfg.ir.value.instruction.CmpOpcode
+import org.vorpal.research.kfg.ir.value.instruction.EnterMonitorInst
+import org.vorpal.research.kfg.ir.value.instruction.ExitMonitorInst
+import org.vorpal.research.kfg.ir.value.instruction.FieldLoadInst
+import org.vorpal.research.kfg.ir.value.instruction.FieldStoreInst
+import org.vorpal.research.kfg.ir.value.instruction.Handle
+import org.vorpal.research.kfg.ir.value.instruction.InstanceOfInst
+import org.vorpal.research.kfg.ir.value.instruction.Instruction
+import org.vorpal.research.kfg.ir.value.instruction.InvokeDynamicInst
+import org.vorpal.research.kfg.ir.value.instruction.JumpInst
+import org.vorpal.research.kfg.ir.value.instruction.NewArrayInst
+import org.vorpal.research.kfg.ir.value.instruction.NewInst
+import org.vorpal.research.kfg.ir.value.instruction.PhiInst
+import org.vorpal.research.kfg.ir.value.instruction.ReturnInst
+import org.vorpal.research.kfg.ir.value.instruction.SwitchInst
+import org.vorpal.research.kfg.ir.value.instruction.TableSwitchInst
+import org.vorpal.research.kfg.ir.value.instruction.TerminateInst
+import org.vorpal.research.kfg.ir.value.instruction.ThrowInst
+import org.vorpal.research.kfg.ir.value.instruction.UnaryInst
+import org.vorpal.research.kfg.ir.value.instruction.UnknownValueInst
 import org.vorpal.research.kfg.visitor.MethodVisitor
 import org.vorpal.research.kthelper.assert.ktassert
+import org.vorpal.research.kthelper.collection.zipTo
 import org.vorpal.research.kthelper.logging.log
-import ru.spbstu.Const
-import ru.spbstu.SymRational
 
 class InvalidInstructionError(message: String) : Exception(message)
 
@@ -26,6 +52,7 @@ class PredicateBuilder(override val cm: ClassManager) : MethodVisitor {
     private val innerPhiPredicateMap = hashMapOf<Pair<BasicBlock, Instruction>, Predicate>()
     private val innerTerminatorPredicateMap = hashMapOf<Pair<BasicBlock, TerminateInst>, MutableSet<Predicate>>()
 
+    @Suppress("unused")
     val termMap: Map<Value, Term> get() = innerTermMap
     val predicateMap: Map<Instruction, Predicate> get() = innerPredicateMap
     val phiPredicateMap: Map<Pair<BasicBlock, Instruction>, Predicate> get() = innerPhiPredicateMap
@@ -157,11 +184,11 @@ class PredicateBuilder(override val cm: ClassManager) : MethodVisitor {
         ktassert(lambdaBases.size == 1) { log.error("Unknown number of bases of ${inst.print()}") }
         val lambdaBase = lambdaBases.first()
 
-        val argParameters = lambdaBase.method.argTypes.withIndex().map { term { arg(it.value.kexType, it.index) } }
-        val lambdaParameters = lambdaBase.method.argTypes.withIndex().map { (index, type) ->
+        val argParameters = lambdaBase.method.argTypes.mapIndexed { index, type -> term { arg(type.kexType, index) } }
+        val lambdaParameters = lambdaBase.method.argTypes.mapIndexed { index, type ->
             term { value(type.kexType, "labmda_${lambdaBase.method.name}_$index") }
         }
-        val mapping = argParameters.zip(lambdaParameters).toMap().toMutableMap()
+        val mapping = argParameters.zipTo(lambdaParameters, mutableMapOf())
         val `this` = term { `this`(lambdaBase.method.klass.kexType) }
         mapping[`this`] = `this`
 

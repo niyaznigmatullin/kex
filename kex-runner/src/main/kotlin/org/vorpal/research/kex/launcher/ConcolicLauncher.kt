@@ -5,8 +5,6 @@ import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.InternalSerializationApi
 import org.vorpal.research.kex.ExecutionContext
 import org.vorpal.research.kex.asm.analysis.concolic.InstructionConcolicChecker
-import org.vorpal.research.kex.asm.manager.ClassInstantiationDetector
-import org.vorpal.research.kex.asm.state.PredicateStateAnalysis
 import org.vorpal.research.kex.asm.transform.SymbolicTraceInstrumenter
 import org.vorpal.research.kex.asm.transform.SystemExitTransformer
 import org.vorpal.research.kex.config.kexConfig
@@ -15,7 +13,7 @@ import org.vorpal.research.kex.trace.runner.ExecutorMasterController
 import org.vorpal.research.kex.util.PermanentCoverageInfo
 import org.vorpal.research.kfg.Package
 import org.vorpal.research.kfg.ir.Method
-import org.vorpal.research.kfg.visitor.MethodVisitor
+import org.vorpal.research.kfg.visitor.Pipeline
 import org.vorpal.research.kfg.visitor.executePipeline
 import org.vorpal.research.kthelper.logging.log
 import kotlin.time.ExperimentalTime
@@ -24,15 +22,10 @@ import kotlin.time.ExperimentalTime
 @ExperimentalSerializationApi
 @InternalSerializationApi
 @DelicateCoroutinesApi
-class ConcolicLauncher(classPaths: List<String>, targetName: String) : KexLauncher(classPaths, targetName) {
-    override fun createInstrumenter(context: ExecutionContext): MethodVisitor {
-        return SymbolicTraceInstrumenter(context)
+class ConcolicLauncher(classPaths: List<String>, targetName: String) : KexAnalysisLauncher(classPaths, targetName) {
+    override fun prepareClassPath(ctx: ExecutionContext): Pipeline.() -> Unit = {
+        +SymbolicTraceInstrumenter(ctx)
     }
-
-    override fun preparePackage(ctx: ExecutionContext, psa: PredicateStateAnalysis, pkg: Package) =
-        executePipeline(ctx.cm, pkg) {
-            +ClassInstantiationDetector(ctx)
-        }
 
     private val batchedTargets: Set<Set<Method>>
         get() = when (analysisLevel) {

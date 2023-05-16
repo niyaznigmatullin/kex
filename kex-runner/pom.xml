@@ -12,13 +12,14 @@
     <artifactId>kex-runner</artifactId>
 
     <properties>
-        <mainClass>org.vorpal.research.kex.ConcolicKt</mainClass>
+        <mainClass>org.vorpal.research.kex.SymbolicKt</mainClass>
 
         <better-parse.version>0.4.4</better-parse.version>
         <jacoco.version>0.8.8</jacoco.version>
         <junit.version>4.13.2</junit.version>
 
         <commons-text.version>1.10.0</commons-text.version>
+        <java-stack-trace-parser.version>v1.0.1</java-stack-trace-parser.version>
     </properties>
 
     <dependencies>

@@ -3,7 +3,6 @@ package org.vorpal.research.kex.trace.symbolic.protocol
 import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.InternalSerializationApi
 import org.vorpal.research.kex.serialization.KexSerializer
-import org.vorpal.research.kex.trace.symbolic.ExecutionResult
 import org.vorpal.research.kthelper.logging.log
 import java.io.BufferedReader
 import java.io.BufferedWriter
@@ -124,7 +123,10 @@ class Master2WorkerSocketConnection(private val socket: Socket) : Master2WorkerC
 
 @ExperimentalSerializationApi
 @InternalSerializationApi
-class Client2MasterSocketConnection(val serializer: KexSerializer, private val port: Int) : Client2MasterConnection {
+class Client2MasterSocketConnection(
+    val serializer: KexSerializer,
+    private val port: Int
+) : Client2MasterConnection {
     private lateinit var socket: Socket
     private lateinit var writer: BufferedWriter
     private lateinit var reader: BufferedReader

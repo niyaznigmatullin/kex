@@ -1,10 +1,12 @@
+@file:Suppress("unused")
+
 package org.vorpal.research.kex.util
 
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import org.vorpal.research.kex.config.kexConfig
-import org.vorpal.research.kfg.ir.Method
 import org.vorpal.research.kthelper.assert.unreachable
+import org.vorpal.research.kthelper.graph.Viewable
 import org.vorpal.research.kthelper.logging.log
 import org.vorpal.research.kthelper.tryOrNull
 import java.io.File
@@ -13,7 +15,9 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.SimpleFileVisitor
 import java.nio.file.attribute.BasicFileAttributes
-import java.util.*
+import java.util.Locale
+import kotlin.io.path.ExperimentalPathApi
+import kotlin.io.path.deleteRecursively
 
 
 private val dot by lazy { kexConfig.getStringValue("view", "dot") ?: unreachable { log.error("Could not find dot") } }
@@ -21,8 +25,8 @@ private val viewer by lazy {
     kexConfig.getStringValue("view", "viewer") ?: unreachable { log.error("Could not find viewer") }
 }
 
-fun Method.view() {
-    this.view(dot, viewer)
+fun Viewable.view() {
+    this.view("", dot, viewer)
 }
 
 infix fun <A, B> A.with(b: B): Pair<A, B> = this to b
@@ -67,6 +71,7 @@ fun String.splitAtLast(str: String): Pair<String, String> {
 }
 
 fun <T : Any> T.asList() = listOf(this)
+fun <T : Any> T.asSet() = setOf(this)
 
 
 fun deleteOnExit(file: File) = deleteOnExit(file.toPath())
@@ -93,14 +98,9 @@ fun deleteOnExit(directoryToBeDeleted: Path) = Runtime.getRuntime().addShutdownH
 })
 
 fun deleteDirectory(directoryToBeDeleted: Path) = deleteDirectory(directoryToBeDeleted.toFile())
-fun deleteDirectory(directoryToBeDeleted: File): Boolean {
-    val allContents = directoryToBeDeleted.listFiles()
-    if (allContents != null) {
-        for (file in allContents) {
-            deleteDirectory(file)
-        }
-    }
-    return directoryToBeDeleted.delete()
+@OptIn(ExperimentalPathApi::class)
+fun deleteDirectory(directoryToBeDeleted: File) {
+    directoryToBeDeleted.toPath().deleteRecursively()
 }
 
 fun <T> Iterable<T>.dropLast(n: Int) = take(count() - n)

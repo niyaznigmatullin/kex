@@ -1,20 +1,39 @@
 package org.vorpal.research.kex.state.transformer
 
-import org.vorpal.research.kex.ktype.*
-import org.vorpal.research.kex.state.*
-import org.vorpal.research.kex.state.predicate.*
+import org.vorpal.research.kex.ktype.KexBool
+import org.vorpal.research.kex.ktype.KexChar
+import org.vorpal.research.kex.ktype.KexClass
+import org.vorpal.research.kex.ktype.KexInt
+import org.vorpal.research.kex.ktype.KexString
+import org.vorpal.research.kex.ktype.asArray
+import org.vorpal.research.kex.ktype.kexType
+import org.vorpal.research.kex.state.PredicateState
+import org.vorpal.research.kex.state.StateBuilder
+import org.vorpal.research.kex.state.basic
+import org.vorpal.research.kex.state.choice
+import org.vorpal.research.kex.state.predicate.CallPredicate
+import org.vorpal.research.kex.state.predicate.Predicate
+import org.vorpal.research.kex.state.predicate.PredicateBuilder
+import org.vorpal.research.kex.state.predicate.assume
+import org.vorpal.research.kex.state.predicate.predicate
 import org.vorpal.research.kex.state.term.CallTerm
 import org.vorpal.research.kex.state.term.LambdaTerm
 import org.vorpal.research.kex.state.term.Term
 import org.vorpal.research.kex.state.term.term
+import org.vorpal.research.kex.state.wrap
 import org.vorpal.research.kfg.ClassManager
 import org.vorpal.research.kfg.ir.Class
 import org.vorpal.research.kfg.stringClass
-import org.vorpal.research.kfg.type.*
+import org.vorpal.research.kfg.type.ClassType
+import org.vorpal.research.kfg.type.SystemTypeNames
+import org.vorpal.research.kfg.type.Type
+import org.vorpal.research.kfg.type.TypeFactory
+import org.vorpal.research.kfg.type.objectType
+import org.vorpal.research.kfg.type.stringType
 import org.vorpal.research.kthelper.collection.dequeOf
 
 
-private val TypeFactory.charSeqType get() = cm["java/lang/CharSequence"].type
+private val TypeFactory.charSeqType get() = cm[SystemTypeNames.charSequence].asType
 private fun Type.getArray(types: TypeFactory) = types.getArrayType(this)
 
 fun Class.getCtor(vararg argTypes: Type) =
@@ -24,7 +43,7 @@ fun Class.getCtor(vararg argTypes: Type) =
 abstract class StringMethodContext(val cm: ClassManager) {
     val stringType = cm.type.stringType
     val objectType = cm.type.objectType
-    private val charSeqType = cm.type.charSeqType
+    val charSeqType = cm.type.charSeqType
 
     val Class.emptyInit
         get() = getCtor()
@@ -71,6 +90,9 @@ abstract class StringMethodContext(val cm: ClassManager) {
         get() = getMethod("toString", stringType)
     val Class.compareTo
         get() = getMethod("compareTo", cm.type.intType, stringType)
+
+    val Class.toCharArray
+        get() = getMethod("toCharArray", cm.type.charType.asArray)
 }
 
 @Suppress("DEPRECATION")
@@ -728,33 +750,54 @@ class StringMethodAdapter(cm: ClassManager) : StringMethodContext(cm), Recollect
         }
     }
 
+    private fun toCharArray(lhv: Term, term: Term) = basic {
+        state {
+            lhv equality term.valueArray().load()
+        }
+    }
+
     override fun transformCallPredicate(predicate: CallPredicate): Predicate {
         val call = predicate.call as CallTerm
         val args = call.arguments
+        if (call.owner.type !is KexClass) return predicate
 
         val kfgString = (stringType as ClassType).klass
-        if (call.owner.type != kfgString.kexType) return predicate
+        val kfgCharSequence = charSeqType.klass
+        val kfgOwnerType = (call.owner.type.getKfgType(cm.type) as ClassType).klass
+        if (!kfgOwnerType.asType.isSubtypeOf(charSeqType)) return predicate
 
-        val `this` = call.owner
+
+        val `this` = when (kfgOwnerType) {
+            kfgString -> call.owner
+            kfgCharSequence -> {
+                val stringTerm = term { generate(kfgString.kexType) }
+                currentBuilder += assume {
+                    stringTerm equality (call.owner `as` kfgString.kexType)
+                }
+                stringTerm
+            }
+
+            else -> return predicate
+        }
         val calledMethod = call.method
-
         currentBuilder += when (calledMethod) {
             kfgString.emptyInit -> emptyInit(`this`)
             kfgString.copyInit -> copyInit(`this`, args[0])
             kfgString.charArrayInit -> charArrayInit(`this`, args[0])
             kfgString.charArrayWOffsetInit -> charArrayWOffsetInit(`this`, args[0], args[1], args[2])
-            kfgString.length -> length(predicate.lhv, `this`)
+            kfgString.length, kfgCharSequence.length -> length(predicate.lhv, `this`)
             kfgString.isEmpty -> isEmpty(predicate.lhv, `this`)
-            kfgString.charAt -> charAt(predicate.lhv, `this`, args[0])
-            kfgString.equals -> equals(predicate.lhv, `this`, args[0])
+            kfgString.charAt, kfgCharSequence.charAt -> charAt(predicate.lhv, `this`, args[0])
+            kfgString.equals, kfgCharSequence.charAt -> equals(predicate.lhv, `this`, args[0])
             kfgString.startsWith -> startsWith(predicate.lhv, `this`, args[0])
             kfgString.startsWithOffset -> startsWithOffset(predicate.lhv, `this`, args[0], args[1])
             kfgString.endsWith -> endsWith(predicate.lhv, `this`, args[0])
             kfgString.substring -> substring(predicate.lhv, `this`, args[0])
             kfgString.substringWLength -> substringWLength(predicate.lhv, `this`, args[0], args[1])
-            kfgString.subSequence -> subSequence(predicate.lhv, `this`, args[0], args[1])
+            kfgString.subSequence, kfgCharSequence.charAt -> subSequence(predicate.lhv, `this`, args[0], args[1])
             kfgString.concat -> concat(predicate.lhv, `this`, args[0])
-            kfgString.toString -> toString(predicate.lhv, `this`)
+            kfgString.toString, kfgCharSequence.charAt -> toString(predicate.lhv, `this`)
+            kfgString.toCharArray, kfgCharSequence.charAt -> toCharArray(predicate.lhv, `this`)
             else -> predicate.wrap()
         }
         return nothing()
@@ -810,6 +853,7 @@ class TermExprStringAdapter(cm: ClassManager) : StringMethodContext(cm), Transfo
 //            kfgString.subSequence -> subSequence(predicate.lhv, `this`, args[0], args[1])
 //            kfgString.concat -> concat(predicate.lhv, `this`, args[0])
             kfgString.toString -> `this`
+            kfgString.toCharArray -> term { term.valueArray().load() }
             else -> term
         }
     }

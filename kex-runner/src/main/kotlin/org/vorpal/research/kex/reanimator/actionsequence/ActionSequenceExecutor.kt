@@ -2,11 +2,17 @@ package org.vorpal.research.kex.reanimator.actionsequence
 
 import org.vorpal.research.kex.ExecutionContext
 import org.vorpal.research.kex.config.kexConfig
-import org.vorpal.research.kex.util.*
+import org.vorpal.research.kex.util.getConstructor
+import org.vorpal.research.kex.util.getFieldByName
+import org.vorpal.research.kex.util.loadClass
+import org.vorpal.research.kex.util.getMethod
+import org.vorpal.research.kex.util.isFinal
+import org.vorpal.research.kex.util.runWithTimeout
 import org.vorpal.research.kthelper.assert.unreachable
 import org.vorpal.research.kthelper.logging.error
 import org.vorpal.research.kthelper.logging.log
 import org.vorpal.research.kthelper.tryOrNull
+import ru.spbstu.wheels.mapToArray
 import java.lang.reflect.Array
 import java.lang.reflect.Field
 
@@ -77,7 +83,7 @@ class ActionSequenceExecutor(val ctx: ExecutionContext) {
                         val reflection = ctx.loader.loadClass(call.constructor.klass)
                         val constructor = reflection.getConstructor(call.constructor, ctx.loader)
                         constructor.isAccessible = true
-                        val args = call.args.map { execute(it) }.toTypedArray()
+                        val args = call.args.mapToArray { execute(it) }
                         var instance: Any? = null
                         runWithTimeout(timeout) {
                             instance = constructor.newInstance(*args)
@@ -89,7 +95,7 @@ class ActionSequenceExecutor(val ctx: ExecutionContext) {
                         val reflection = ctx.loader.loadClass(call.constructor.klass)
                         val javaMethod = reflection.getMethod(call.constructor, ctx.loader)
                         javaMethod.isAccessible = true
-                        val args = call.args.map { execute(it) }.toTypedArray()
+                        val args = call.args.mapToArray { execute(it) }
                         var instance: Any? = null
                         runWithTimeout(timeout) {
                             instance = javaMethod.invoke(null, *args)
@@ -102,7 +108,7 @@ class ActionSequenceExecutor(val ctx: ExecutionContext) {
                         val javaMethod = reflection.getMethod(call.method, ctx.loader)
                         javaMethod.isAccessible = true
                         val owner = execute(call.instance)
-                        val args = call.args.map { execute(it) }.toTypedArray()
+                        val args = call.args.mapToArray { execute(it) }
                         var instance: Any? = null
                         runWithTimeout(timeout) {
                             instance = javaMethod.invoke(owner, *args)
@@ -115,7 +121,7 @@ class ActionSequenceExecutor(val ctx: ExecutionContext) {
                         val constructor = reflection.getConstructor(call.constructor, ctx.loader)
                         constructor.isAccessible = true
                         val outerObject = execute(call.outerObject)
-                        val args = call.args.map { execute(it) }.toTypedArray()
+                        val args = call.args.mapToArray { execute(it) }
                         var instance: Any? = null
                         runWithTimeout(timeout) {
                             instance = constructor.newInstance(outerObject, *args)
@@ -127,7 +133,7 @@ class ActionSequenceExecutor(val ctx: ExecutionContext) {
                         val reflection = ctx.loader.loadClass(call.method.klass)
                         val javaMethod = reflection.getMethod(call.method, ctx.loader)
                         javaMethod.isAccessible = true
-                        val args = call.args.map { execute(it) }.toTypedArray()
+                        val args = call.args.mapToArray { execute(it) }
                         runWithTimeout(timeout) {
                             javaMethod.invoke(current, *args)
                         }
@@ -137,7 +143,7 @@ class ActionSequenceExecutor(val ctx: ExecutionContext) {
                         val reflection = ctx.loader.loadClass(call.method.klass)
                         val javaMethod = reflection.getMethod(call.method, ctx.loader)
                         javaMethod.isAccessible = true
-                        val args = call.args.map { execute(it) }.toTypedArray()
+                        val args = call.args.mapToArray { execute(it) }
                         runWithTimeout(timeout) {
                             javaMethod.invoke(null, *args)
                         }

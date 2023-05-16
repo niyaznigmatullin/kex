@@ -4,14 +4,12 @@ import kotlinx.serialization.Required
 import kotlinx.serialization.Serializable
 import org.vorpal.research.kex.BaseType
 import org.vorpal.research.kex.InheritanceInfo
-import org.vorpal.research.kex.random.easyrandom.EasyRandomDriver
-import org.vorpal.research.kex.state.TypeInfo
+import org.vorpal.research.kex.state.InheritanceTypeInfo
 import org.vorpal.research.kex.state.term.Term
 import org.vorpal.research.kex.state.term.term
 import org.vorpal.research.kex.state.transformer.Transformer
 import org.vorpal.research.kfg.ir.Location
 import org.vorpal.research.kthelper.assert.fail
-import org.vorpal.research.kthelper.defaultHashCode
 import org.vorpal.research.kthelper.logging.log
 import kotlin.random.Random
 
@@ -47,7 +45,7 @@ abstract class PredicateType {
 
 @BaseType("Predicate")
 @Serializable
-abstract class Predicate : TypeInfo {
+abstract class Predicate : InheritanceTypeInfo {
     abstract val type: PredicateType
     abstract val location: Location
     abstract val operands: List<Term>
@@ -74,7 +72,7 @@ abstract class Predicate : TypeInfo {
     abstract fun print(): String
     abstract fun <T : Transformer<T>> accept(t: Transformer<T>): Predicate
 
-    override fun hashCode() = defaultHashCode(type, operands)
+    override fun hashCode() = 31 * type.hashCode() + operands.hashCode()
     override fun equals(other: Any?): Boolean {
         if (this === other) return true
         if (other?.javaClass != this.javaClass) return false
@@ -105,7 +103,7 @@ val Predicate.hasReceiver
 
 val Predicate.receiver get() = if (hasReceiver) operands[0] else null
 
-fun Predicate.inverse(random: Random = EasyRandomDriver()): Predicate = when (this) {
+fun Predicate.inverse(random: Random): Predicate = when (this) {
     is EqualityPredicate -> when (rhv) {
         term { const(true) } -> predicate(type, location) { lhv equality false }
         term { const(false) } -> predicate(type, location) { lhv equality true }

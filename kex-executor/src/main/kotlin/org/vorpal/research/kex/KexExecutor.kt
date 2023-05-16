@@ -9,21 +9,21 @@ import org.vorpal.research.kex.config.kexConfig
 import org.vorpal.research.kex.descriptor.convertToDescriptor
 import org.vorpal.research.kex.random.easyrandom.EasyRandomDriver
 import org.vorpal.research.kex.serialization.KexSerializer
-import org.vorpal.research.kex.trace.symbolic.ExceptionResult
-import org.vorpal.research.kex.trace.symbolic.SuccessResult
 import org.vorpal.research.kex.trace.symbolic.TraceCollectorProxy
+import org.vorpal.research.kex.trace.symbolic.protocol.ExceptionResult
+import org.vorpal.research.kex.trace.symbolic.protocol.SuccessResult
 import org.vorpal.research.kex.util.getIntrinsics
 import org.vorpal.research.kex.util.getPathSeparator
 import org.vorpal.research.kex.util.getRuntime
 import org.vorpal.research.kfg.ClassManager
 import org.vorpal.research.kfg.KfgConfig
-import org.vorpal.research.kfg.Package
 import org.vorpal.research.kfg.container.Container
 import org.vorpal.research.kfg.container.asContainer
 import org.vorpal.research.kfg.ir.value.NameMapperContext
 import org.vorpal.research.kfg.util.Flags
 import org.vorpal.research.kthelper.logging.error
 import org.vorpal.research.kthelper.logging.log
+import ru.spbstu.wheels.mapToArray
 import java.net.URLClassLoader
 import java.nio.file.Paths
 import kotlin.system.exitProcess
@@ -43,11 +43,10 @@ class KexExecutor(args: Array<String>) {
     private val cmd = ExecutorCmdConfig(args)
     private val properties = cmd.getCmdValue("config", "kex.ini")
     private val output = cmd.getCmdValue("output")!!.let { Paths.get(it) }
-    private val target = Package.parse(cmd.getCmdValue("package")!!)
 
-    val containers: List<Container>
-    val containerClassLoader: URLClassLoader
-    val classManager: ClassManager
+    private val containers: List<Container>
+    private val containerClassLoader: URLClassLoader
+    private val classManager: ClassManager
 
     init {
         kexConfig.initialize(cmd, RuntimeConfig, FileConfig(properties))
@@ -57,7 +56,7 @@ class KexExecutor(args: Array<String>) {
         val classPaths = cmd.getCmdValue("classpath")!!
             .split(getPathSeparator())
             .map { Paths.get(it).toAbsolutePath() }
-        containerClassLoader = URLClassLoader(classPaths.map { it.toUri().toURL() }.toTypedArray())
+        containerClassLoader = URLClassLoader(classPaths.mapToArray { it.toUri().toURL() })
 
         containers = classPaths.map {
             it.asContainer() ?: run {
@@ -74,7 +73,6 @@ class KexExecutor(args: Array<String>) {
     fun main() {
         val ctx = ExecutionContext(
             classManager,
-            target,
             containerClassLoader,
             EasyRandomDriver(),
             containers.map { it.path }

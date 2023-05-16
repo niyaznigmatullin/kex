@@ -12,6 +12,7 @@ import org.vorpal.research.kfg.type.ArrayType
 import org.vorpal.research.kfg.type.Type
 import org.vorpal.research.kthelper.collection.queueOf
 import org.vorpal.research.kthelper.logging.log
+import ru.spbstu.wheels.mapToArray
 
 
 sealed class ActionSequence(val name: String) {
@@ -132,10 +133,6 @@ class ActionList(
     }
 
     fun reversed() = ActionList(name, list.reversed().toMutableList())
-    fun reverse(): ActionList {
-        this.list.reverse()
-        return this
-    }
 
     override fun clone() = ActionList(name, list.toMutableList())
 
@@ -180,10 +177,6 @@ class ReflectionList(
     }
 
     fun reversed() = ReflectionList(name, list.reversed().toMutableList())
-    fun reverse(): ReflectionList {
-        this.list.reverse()
-        return this
-    }
 
     override fun clone() = ReflectionList(name, list.toMutableList())
 
@@ -535,7 +528,7 @@ class ActionSequenceRtMapper(private val mode: KexRtManager.Mode) {
             val unmappedMethod = unmappedKlass.getMethod(
                 api.constructor.name,
                 api.constructor.returnType.mapped,
-                *api.constructor.argTypes.map { it.mapped }.toTypedArray()
+                *api.constructor.argTypes.mapToArray { it.mapped }
             )
             ConstructorCall(unmappedMethod, api.args.map { map(it) })
         }
@@ -549,7 +542,7 @@ class ActionSequenceRtMapper(private val mode: KexRtManager.Mode) {
             val unmappedMethod = unmappedKlass.getMethod(
                 api.constructor.name,
                 api.constructor.returnType.mapped,
-                *api.constructor.argTypes.map { it.mapped }.toTypedArray()
+                *api.constructor.argTypes.mapToArray { it.mapped }
             )
             ExternalConstructorCall(unmappedMethod, api.args.map { map(it) })
         }
@@ -558,7 +551,7 @@ class ActionSequenceRtMapper(private val mode: KexRtManager.Mode) {
             val unmappedMethod = unmappedKlass.getMethod(
                 api.method.name,
                 api.method.returnType.mapped,
-                *api.method.argTypes.map { it.mapped }.toTypedArray()
+                *api.method.argTypes.mapToArray { it.mapped }
             )
             ExternalMethodCall(unmappedMethod, map(api.instance), api.args.map { map(it) })
         }
@@ -572,7 +565,7 @@ class ActionSequenceRtMapper(private val mode: KexRtManager.Mode) {
             val unmappedMethod = unmappedKlass.getMethod(
                 api.constructor.name,
                 api.constructor.returnType.mapped,
-                *api.constructor.argTypes.map { it.mapped }.toTypedArray()
+                *api.constructor.argTypes.mapToArray { it.mapped }
             )
             InnerClassConstructorCall(unmappedMethod,
                 map(api.outerObject), api.args.map { map(it) })
@@ -582,7 +575,7 @@ class ActionSequenceRtMapper(private val mode: KexRtManager.Mode) {
             val unmappedMethod = unmappedKlass.getMethod(
                 api.method.name,
                 api.method.returnType.mapped,
-                *api.method.argTypes.map { it.mapped }.toTypedArray()
+                *api.method.argTypes.mapToArray { it.mapped }
             )
             MethodCall(unmappedMethod, api.args.map { map(it) })
         }
@@ -603,7 +596,7 @@ class ActionSequenceRtMapper(private val mode: KexRtManager.Mode) {
             val unmappedMethod = unmappedKlass.getMethod(
                 api.method.name,
                 api.method.returnType.mapped,
-                *api.method.argTypes.map { it.mapped }.toTypedArray()
+                *api.method.argTypes.mapToArray { it.mapped }
             )
             StaticMethodCall(unmappedMethod, api.args.map { map(it) })
         }

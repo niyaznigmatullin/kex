@@ -16,6 +16,8 @@ private class EmptyTraceCollector : InstructionTraceCollector {
         override val path = PathConditionImpl()
         override val concreteValueMap = emptyMap<Term, Descriptor>()
         override val termMap = emptyMap<Term, WrappedValue>()
+
+        override fun plus(other: SymbolicState): SymbolicState = other
     }
 
     override val symbolicState = EmptyState()
@@ -157,6 +159,7 @@ private class EmptyTraceCollector : InstructionTraceCollector {
     override fun addArrayLengthConstraints(inst: String, length: String, concreteLength: Any?) {}
 }
 
+@Suppress("unused")
 object TraceCollectorProxy {
     private lateinit var ctx: ExecutionContext
     private var collector: InstructionTraceCollector = EmptyTraceCollector()

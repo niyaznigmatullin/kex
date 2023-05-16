@@ -5,13 +5,23 @@ import kotlinx.serialization.InternalSerializationApi
 import kotlinx.serialization.modules.SerializersModule
 import kotlinx.serialization.modules.polymorphic
 import kotlinx.serialization.serializer
-import org.vorpal.research.kex.descriptor.*
+import org.vorpal.research.kex.descriptor.ArrayDescriptor
+import org.vorpal.research.kex.descriptor.ClassDescriptor
+import org.vorpal.research.kex.descriptor.ConstantDescriptor
+import org.vorpal.research.kex.descriptor.Descriptor
+import org.vorpal.research.kex.descriptor.FieldContainingDescriptor
+import org.vorpal.research.kex.descriptor.ObjectDescriptor
 import org.vorpal.research.kex.ktype.KexType
 import org.vorpal.research.kex.state.PredicateState
 import org.vorpal.research.kex.state.predicate.Predicate
 import org.vorpal.research.kex.state.predicate.PredicateType
 import org.vorpal.research.kex.state.term.Term
-import org.vorpal.research.kex.trace.symbolic.*
+import org.vorpal.research.kex.trace.symbolic.Clause
+import org.vorpal.research.kex.trace.symbolic.PathClause
+import org.vorpal.research.kex.trace.symbolic.StateClause
+import org.vorpal.research.kex.trace.symbolic.SymbolicState
+import org.vorpal.research.kex.trace.symbolic.SymbolicStateImpl
+import org.vorpal.research.kex.trace.symbolic.WrappedValue
 import org.vorpal.research.kfg.ClassManager
 import org.vorpal.research.kfg.ir.Method
 import org.vorpal.research.kfg.ir.value.NameMapperContext
@@ -28,7 +38,6 @@ val kexTypeSerialModule: SerializersModule
         }
     }
 
-@ExperimentalSerializationApi
 @InternalSerializationApi
 fun getTermSerialModule(cm: ClassManager, ctx: NameMapperContext): SerializersModule = SerializersModule {
     include(getKfgSerialModule(cm, ctx))
@@ -53,7 +62,6 @@ val predicateTypeSerialModule: SerializersModule
         }
     }
 
-@ExperimentalSerializationApi
 @InternalSerializationApi
 fun getPredicateSerialModule(cm: ClassManager, ctx: NameMapperContext): SerializersModule = SerializersModule {
     include(getTermSerialModule(cm, ctx))
@@ -67,7 +75,6 @@ fun getPredicateSerialModule(cm: ClassManager, ctx: NameMapperContext): Serializ
     }
 }
 
-@ExperimentalSerializationApi
 @InternalSerializationApi
 fun getPredicateStateSerialModule(cm: ClassManager, ctx: NameMapperContext): SerializersModule = SerializersModule {
     include(getPredicateSerialModule(cm, ctx))
@@ -80,7 +87,6 @@ fun getPredicateStateSerialModule(cm: ClassManager, ctx: NameMapperContext): Ser
     }
 }
 
-@ExperimentalSerializationApi
 @InternalSerializationApi
 fun getDescriptorSerialModule(): SerializersModule = SerializersModule {
     val descriptorSerializer = DescriptorSerializer()
@@ -101,7 +107,6 @@ fun getDescriptorSerialModule(): SerializersModule = SerializersModule {
     contextual(ArrayDescriptor::class, descriptorSerializer.to())
 }
 
-@ExperimentalSerializationApi
 @InternalSerializationApi
 fun getSymbolicStateSerialModule(): SerializersModule = SerializersModule {
     polymorphic(Clause::class) {
@@ -119,10 +124,12 @@ fun getPreSymbolicSerialModule(cm: ClassManager, ctx: NameMapperContext): Serial
     val base = getPredicateStateSerialModule(cm, ctx)
     include(base)
     include(getDescriptorSerialModule())
-    contextual(WrappedValue::class, WrappedValueSerializer(
-        ctx,
-        base.getContextual(Method::class)!!
-    ))
+    contextual(
+        WrappedValue::class, WrappedValueSerializer(
+            ctx,
+            base.getContextual(Method::class)!!
+        )
+    )
 }
 
 @ExperimentalSerializationApi

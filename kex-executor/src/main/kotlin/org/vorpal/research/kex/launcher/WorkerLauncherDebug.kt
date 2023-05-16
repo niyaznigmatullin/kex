@@ -9,7 +9,7 @@ import org.vorpal.research.kex.config.WorkerCmdConfig
 import org.vorpal.research.kex.config.kexConfig
 import org.vorpal.research.kex.random.easyrandom.EasyRandomDriver
 import org.vorpal.research.kex.serialization.KexSerializer
-import org.vorpal.research.kex.trace.symbolic.ExecutionResult
+import org.vorpal.research.kex.trace.symbolic.protocol.ExecutionResult
 import org.vorpal.research.kex.trace.symbolic.protocol.TestExecutionRequest
 import org.vorpal.research.kex.trace.symbolic.protocol.Worker2MasterConnection
 import org.vorpal.research.kex.util.getIntrinsics
@@ -18,10 +18,10 @@ import org.vorpal.research.kex.util.getRuntime
 import org.vorpal.research.kex.worker.ExecutorWorker
 import org.vorpal.research.kfg.ClassManager
 import org.vorpal.research.kfg.KfgConfig
-import org.vorpal.research.kfg.Package
 import org.vorpal.research.kfg.container.asContainer
 import org.vorpal.research.kfg.util.Flags
 import org.vorpal.research.kthelper.logging.log
+import ru.spbstu.wheels.mapToArray
 import java.net.URLClassLoader
 import java.nio.file.Files
 import java.nio.file.Paths
@@ -38,6 +38,7 @@ fun main(args: Array<String>) {
 class WorkerLauncherDebug(args: Array<String>) {
     private val cmd = WorkerCmdConfig(args)
     private val properties = cmd.getCmdValue("config", "kex.ini")
+    @Suppress("unused")
     private val port = cmd.getCmdValue("port")!!.toInt()
 
     val ctx: ExecutionContext
@@ -59,7 +60,7 @@ class WorkerLauncherDebug(args: Array<String>) {
         val classPaths = cmd.getCmdValue("classpath")!!
             .split(getPathSeparator())
             .map { Paths.get(it).toAbsolutePath() }
-        val containerClassLoader = URLClassLoader(classPaths.map { it.toUri().toURL() }.toTypedArray())
+        val containerClassLoader = URLClassLoader(classPaths.mapToArray { it.toUri().toURL() })
 
         val containers = classPaths.map {
             it.asContainer() ?: run {
@@ -69,16 +70,15 @@ class WorkerLauncherDebug(args: Array<String>) {
         }
         val classManager = ClassManager(KfgConfig(flags = Flags.readAll, failOnError = false, verifyIR = false))
         classManager.initialize(
-            *listOfNotNull(
+            listOfNotNull(
                 *containers.toTypedArray(),
                 getRuntime(),
                 getIntrinsics()
-            ).toTypedArray()
+            )
         )
 
         ctx = ExecutionContext(
             classManager,
-            Package.defaultPackage,
             containerClassLoader,
             EasyRandomDriver(),
             containers.map { it.path }

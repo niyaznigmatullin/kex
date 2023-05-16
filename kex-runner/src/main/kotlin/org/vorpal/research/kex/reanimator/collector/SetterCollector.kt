@@ -12,7 +12,7 @@ import org.vorpal.research.kthelper.assert.asserted
 import org.vorpal.research.kthelper.logging.log
 import org.vorpal.research.kthelper.`try`
 import java.lang.Class
-import java.util.*
+import java.util.Locale
 import kotlin.reflect.KMutableProperty
 import kotlin.reflect.KType
 import kotlin.reflect.full.memberProperties
@@ -33,8 +33,8 @@ class SetterCollector(val ctx: ExecutionContext) : ClassVisitor {
         get() = ctx.cm
 
     private val KType.kfgType
-        get() = when (val jtype = this.javaType) {
-            is Class<*> -> ctx.types.get(jtype)
+        get() = when (val jType = this.javaType) {
+            is Class<*> -> ctx.types.get(jType)
             else -> TODO()
         }
 

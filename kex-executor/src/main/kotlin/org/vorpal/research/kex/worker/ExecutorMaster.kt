@@ -8,8 +8,8 @@ import kotlinx.serialization.InternalSerializationApi
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.serializer
 import org.vorpal.research.kex.config.kexConfig
-import org.vorpal.research.kex.trace.symbolic.ExecutionFailedResult
-import org.vorpal.research.kex.trace.symbolic.ExecutionTimedOutResult
+import org.vorpal.research.kex.trace.symbolic.protocol.ExecutionFailedResult
+import org.vorpal.research.kex.trace.symbolic.protocol.ExecutionTimedOutResult
 import org.vorpal.research.kex.trace.symbolic.protocol.Master2ClientConnection
 import org.vorpal.research.kex.trace.symbolic.protocol.Master2WorkerConnection
 import org.vorpal.research.kex.trace.symbolic.protocol.MasterProtocolHandler
@@ -33,7 +33,7 @@ class ExecutorMaster(
     private val timeout = kexConfig.getIntValue("runner", "timeout", 100)
     private val workerQueue = ArrayBlockingQueue<WorkerWrapper>(numberOfWorkers)
     private val outputDir = kexConfig.outputDirectory
-    private val workerJvmParams = kexConfig.getMultipleStringValue("executor", "workerJvmParams", ",")
+    private val workerJvmParams = kexConfig.getMultipleStringValue("executor", "workerJvmParams", ",").toTypedArray()
     private val executorPolicyPath = (kexConfig.getPathValue(
         "executor", "executorPolicyPath"
     ) ?: Paths.get("kex.policy")).toAbsolutePath()
@@ -79,7 +79,7 @@ class ExecutorMaster(
         private fun createProcess(): Process {
             val pb = ProcessBuilder(
                 "java",
-                *workerJvmParams.toTypedArray(),
+                *workerJvmParams,
                 "-Djava.security.manager",
                 "-Djava.security.policy==${executorPolicyPath}",
                 "-classpath", workerClassPath.joinToString(getPathSeparator()),
@@ -117,7 +117,6 @@ class ExecutorMaster(
         }
 
         fun destroy() {
-            log.debug("Worker $id is destroyed")
             process.destroy()
         }
     }

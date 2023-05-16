@@ -1,3 +1,5 @@
+@file:Suppress("unused")
+
 package org.vorpal.research.kex.state
 
 import kotlinx.serialization.Serializable
@@ -11,7 +13,7 @@ import org.vorpal.research.kthelper.assert.fail
 import org.vorpal.research.kthelper.assert.unreachable
 import org.vorpal.research.kthelper.logging.log
 
-interface TypeInfo {
+interface InheritanceTypeInfo {
     val inheritors: Map<String, Class<*>>
     val reverseMapping: Map<Class<*>, String>
 }
@@ -19,7 +21,7 @@ interface TypeInfo {
 fun emptyState(): PredicateState = BasicState()
 fun Predicate.wrap() = emptyState() + this
 
-open class StateBuilder() : PredicateBuilder() {
+open class StateBuilder() : PredicateBuilder {
     override val type = PredicateType.State()
     override val location = Location()
     var current: PredicateState = emptyState()
@@ -65,38 +67,38 @@ open class StateBuilder() : PredicateBuilder() {
     open fun apply() = current
 
     inline fun assume(body: PredicateBuilder.() -> Predicate) {
-        this += Assume().body()
+        this += PredicateBuilder.Assume().body()
     }
     inline fun assume(location: Location, body: PredicateBuilder.() -> Predicate) {
-        this += Assume(location).body()
+        this += PredicateBuilder.Assume(location).body()
     }
 
     inline fun axiom(body: PredicateBuilder.() -> Predicate) {
-        this += Axiom().body()
+        this += PredicateBuilder.Axiom().body()
     }
     inline fun axiom(location: Location, body: PredicateBuilder.() -> Predicate) {
-        this += Axiom(location).body()
+        this += PredicateBuilder.Axiom(location).body()
     }
 
     inline fun state(body: PredicateBuilder.() -> Predicate) {
-        this += State().body()
+        this += PredicateBuilder.State().body()
     }
     inline fun state(location: Location, body: PredicateBuilder.() -> Predicate) {
-        this += State(location).body()
+        this += PredicateBuilder.State(location).body()
     }
 
     inline fun path(body: PredicateBuilder.() -> Predicate) {
-        this += Path().body()
+        this += PredicateBuilder.Path().body()
     }
     inline fun path(location: Location, body: PredicateBuilder.() -> Predicate) {
-        this += Path(location).body()
+        this += PredicateBuilder.Path(location).body()
     }
 
     inline fun require(body: PredicateBuilder.() -> Predicate) {
-        this += Require().body()
+        this += PredicateBuilder.Require().body()
     }
     inline fun require(location: Location, body: PredicateBuilder.() -> Predicate) {
-        this += Require(location).body()
+        this += PredicateBuilder.Require(location).body()
     }
 
     inline fun predicate(type: PredicateType, body: PredicateBuilder.() -> Predicate) = when (type) {
@@ -163,9 +165,10 @@ inline fun PredicateState.choice(right: ChoiceBuilder.() -> Unit): PredicateStat
     return this + rhv
 }
 
+@Suppress("MemberVisibilityCanBePrivate")
 @BaseType("State")
 @Serializable
-abstract class PredicateState : TypeInfo {
+abstract class PredicateState : InheritanceTypeInfo {
     companion object {
         val states = run {
             val loader = Thread.currentThread().contextClassLoader

@@ -15,12 +15,14 @@ import org.vorpal.research.kfg.ir.value.instruction.*
 import org.vorpal.research.kfg.type.mergeTypes
 import org.vorpal.research.kfg.visitor.MethodVisitor
 import org.vorpal.research.kthelper.assert.ktassert
+import org.vorpal.research.kthelper.collection.mapToArray
+import org.vorpal.research.kthelper.collection.zipTo
 import org.vorpal.research.kthelper.logging.log
 import org.vorpal.research.kthelper.`try`
 import kotlin.test.Test
 import kotlin.test.assertTrue
 
-class PredicateBuilderTest : KexTest() {
+class PredicateBuilderTest : KexTest("predicate-builder") {
     val tf = TermFactory
     val pf = PredicateFactory
 
@@ -106,7 +108,7 @@ class PredicateBuilderTest : KexTest() {
                     val lambdaParameters = lambdaBase.method.argTypes.withIndex().map { (index, type) ->
                         term { value(type.kexType, "labmda_${lambdaBase.method.name}_$index") }
                     }
-                    val mapping = argParameters.zip(lambdaParameters).toMap().toMutableMap()
+                    val mapping = argParameters.zipTo(lambdaParameters, mutableMapOf())
                     val `this` = term { `this`(lambdaBase.method.klass.kexType) }
                     mapping[`this`] = `this`
 
@@ -224,8 +226,8 @@ class PredicateBuilderTest : KexTest() {
 
                 assertEquals(predicate.lhv, tf.getValue(inst))
 
-                val dimensions = inst.dimensions.map { tf.getValue(it) }
-                assertArrayEquals(predicate.dimensions.toTypedArray(), dimensions.toTypedArray())
+                val dimensions = inst.dimensions.mapToArray { tf.getValue(it) }
+                assertArrayEquals(predicate.dimensions.toTypedArray(), dimensions)
             }
 
             override fun visitNewInst(inst: NewInst) {

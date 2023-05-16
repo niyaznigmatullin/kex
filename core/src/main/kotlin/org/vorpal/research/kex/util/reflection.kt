@@ -1,23 +1,49 @@
+@file:Suppress("unused")
+
 package org.vorpal.research.kex.util
 
 import org.reflections.Reflections
 import org.reflections.util.ConfigurationBuilder
-import org.vorpal.research.kex.ktype.*
+import org.vorpal.research.kex.ktype.KexArray
+import org.vorpal.research.kex.ktype.KexBool
+import org.vorpal.research.kex.ktype.KexByte
+import org.vorpal.research.kex.ktype.KexChar
+import org.vorpal.research.kex.ktype.KexClass
+import org.vorpal.research.kex.ktype.KexDouble
+import org.vorpal.research.kex.ktype.KexFloat
+import org.vorpal.research.kex.ktype.KexInt
+import org.vorpal.research.kex.ktype.KexLong
+import org.vorpal.research.kex.ktype.KexShort
+import org.vorpal.research.kex.ktype.KexType
 import org.vorpal.research.kex.state.term.FieldTerm
 import org.vorpal.research.kfg.ClassManager
 import org.vorpal.research.kfg.InvalidTypeException
-import org.vorpal.research.kfg.Package
 import org.vorpal.research.kfg.ir.Method
-import org.vorpal.research.kfg.type.*
+import org.vorpal.research.kfg.type.ArrayType
+import org.vorpal.research.kfg.type.BoolType
+import org.vorpal.research.kfg.type.ByteType
+import org.vorpal.research.kfg.type.CharType
+import org.vorpal.research.kfg.type.ClassType
+import org.vorpal.research.kfg.type.DoubleType
+import org.vorpal.research.kfg.type.FloatType
+import org.vorpal.research.kfg.type.IntType
+import org.vorpal.research.kfg.type.LongType
+import org.vorpal.research.kfg.type.ShortType
 import org.vorpal.research.kfg.type.Type
+import org.vorpal.research.kfg.type.TypeFactory
 import org.vorpal.research.kthelper.assert.unreachable
+import org.vorpal.research.kthelper.collection.mapToArray
+import org.vorpal.research.kthelper.collection.queueOf
 import org.vorpal.research.kthelper.logging.log
 import org.vorpal.research.kthelper.`try`
 import java.lang.Class
-import java.lang.reflect.*
 import java.lang.reflect.Array
+import java.lang.reflect.Constructor
+import java.lang.reflect.Field
+import java.lang.reflect.Modifier
+import java.lang.reflect.ParameterizedType
+import java.lang.reflect.TypeVariable
 import java.net.URLClassLoader
-import java.util.*
 import kotlin.Boolean
 import kotlin.Byte
 import kotlin.Char
@@ -74,6 +100,7 @@ fun FieldTerm.isFinal(cm: ClassManager): Boolean {
     return kfgField.isFinal
 }
 
+@Suppress("RecursivePropertyAccessor")
 val Class<*>.kex: KexType
     get() = when {
         this.isPrimitive -> when (this) {
@@ -140,7 +167,7 @@ val JType.kex
 fun ClassLoader.loadClass(tf: TypeFactory, type: KexType): Class<*> = this.loadClass(type.getKfgType(tf))
 
 fun ClassLoader.loadClass(klass: KfgClass): Class<*> =
-    this.loadClass(klass.type)
+    this.loadClass(klass.asType)
 
 fun ClassLoader.loadClass(type: Type): Class<*> = try {
     when (type) {
@@ -172,7 +199,7 @@ fun ClassLoader.loadClass(type: Type): Class<*> = try {
 }
 
 fun Class<*>.getMethod(method: Method, loader: ClassLoader): java.lang.reflect.Method {
-    val argumentTypes = method.argTypes.map { loader.loadClass(it) }.toTypedArray()
+    val argumentTypes = method.argTypes.mapToArray { loader.loadClass(it) }
     return `try` {
         this.getDeclaredMethod(method.name, *argumentTypes)
     }.getOrThrow {
@@ -190,7 +217,7 @@ fun Class<*>.getMethod(loader: ClassLoader, name: String, desc: String): java.la
 }
 
 fun Class<*>.getMethod(loader: ClassLoader, name: String, vararg types: Type): java.lang.reflect.Method {
-    val argumentTypes = types.map { loader.loadClass(it) }.toTypedArray()
+    val argumentTypes = types.mapToArray { loader.loadClass(it) }
     return `try` {
         this.getDeclaredMethod(name, *argumentTypes)
     }.getOrThrow {
@@ -200,7 +227,7 @@ fun Class<*>.getMethod(loader: ClassLoader, name: String, vararg types: Type): j
 
 fun Class<*>.getConstructor(method: Method, loader: ClassLoader): Constructor<*> {
     require(method.isConstructor)
-    val argumentTypes = method.argTypes.map { loader.loadClass(it) }.toTypedArray()
+    val argumentTypes = method.argTypes.mapToArray { loader.loadClass(it) }
     return `try` {
         this.getDeclaredConstructor(*argumentTypes)
     }.getOrThrow {
@@ -209,7 +236,7 @@ fun Class<*>.getConstructor(method: Method, loader: ClassLoader): Constructor<*>
 }
 
 fun Class<*>.getConstructor(loader: ClassLoader, vararg types: Type): Constructor<*> {
-    val argumentTypes = types.map { loader.loadClass(it) }.toTypedArray()
+    val argumentTypes = types.mapToArray { loader.loadClass(it) }
     return `try` {
         this.getDeclaredConstructor(*argumentTypes)
     }.getOrThrow {
@@ -218,10 +245,10 @@ fun Class<*>.getConstructor(loader: ClassLoader, vararg types: Type): Constructo
 }
 
 fun Class<*>.getActualField(name: String): Field {
-    val queue = ArrayDeque<Class<*>>()
+    val queue = queueOf<Class<*>>()
     queue.add(this)
     while (queue.isNotEmpty()) {
-        val top = queue.pollFirst()
+        val top = queue.poll()
         return try {
             top.getDeclaredField(name)
         } catch (e: NoSuchFieldException) {
@@ -307,7 +334,7 @@ fun ClassLoader.loadClassByName(name: String): Class<*> {
         if (it == '[') ++arrCount
         it == '[' || it == ']'
     }
-    var subClass = parseNamedType(end) ?: loadClass(end.replace(Package.SEPARATOR, Package.CANONICAL_SEPARATOR))
+    var subClass = parseNamedType(end) ?: loadClass(end.javaString)
     while (arrCount > 0) {
         --arrCount
         subClass = Array.newInstance(subClass, 0).javaClass

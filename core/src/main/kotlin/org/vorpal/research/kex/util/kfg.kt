@@ -1,8 +1,9 @@
+@file:Suppress("unused", "UnusedReceiverParameter")
+
 package org.vorpal.research.kex.util
 
 import org.vorpal.research.kex.ktype.KexType
 import org.vorpal.research.kex.ktype.kexType
-import org.vorpal.research.kex.ktype.type
 import org.vorpal.research.kfg.ClassManager
 import org.vorpal.research.kfg.Package
 import org.vorpal.research.kfg.ir.Class
@@ -16,7 +17,7 @@ import org.vorpal.research.kthelper.assert.unreachable
 import org.vorpal.research.kthelper.compareTo
 import org.vorpal.research.kthelper.logging.log
 
-val Type.javaDesc get() = this.name.replace(Package.SEPARATOR, Package.CANONICAL_SEPARATOR)
+val Type.javaDesc get() = this.name.javaString
 
 fun Package.isParent(klass: Class) = isParent(klass.pkg)
 
@@ -100,7 +101,7 @@ fun NameMapper.parseValueOrNull(valueName: String): Value? {
 }
 
 fun Type.getAllSubtypes(tf: TypeFactory): Set<Type> = when (this) {
-    is ClassType -> tf.cm.getAllSubtypesOf(this.klass).mapTo(mutableSetOf()) { it.type }
+    is ClassType -> tf.cm.getAllSubtypesOf(this.klass).mapTo(mutableSetOf()) { it.asType }
     is ArrayType -> this.component.getAllSubtypes(tf).mapTo(mutableSetOf()) { tf.getArrayType(it) }
     else -> setOf()
 }
@@ -149,3 +150,20 @@ val ClassManager.abstractListClass get() = this[SystemTypeNames.abstractListClas
 val ClassManager.abstractQueueClass get() = this[SystemTypeNames.abstractQueueClass]
 val ClassManager.abstractSetClass get() = this[SystemTypeNames.abstractSetClass]
 val ClassManager.abstractMapClass get() = this[SystemTypeNames.abstractMapClass]
+
+
+val String.asmString get() = replace(Package.CANONICAL_SEPARATOR, Package.SEPARATOR)
+val String.javaString get() = replace(Package.SEPARATOR, Package.CANONICAL_SEPARATOR)
+
+
+
+val ClassManager.nullptrClass get() = this["java/lang/NullPointerException"]
+val ClassManager.arrayIndexOOBClass get() = this["java/lang/ArrayIndexOutOfBoundsException"]
+val ClassManager.negativeArrayClass get() = this["java/lang/NegativeArraySizeException"]
+val ClassManager.classCastClass get() = this["java/lang/ClassCastException"]
+val ClassManager.stringIndexOOB get() = this["java/lang/StringIndexOutOfBoundsException"]
+
+val ClassManager.numberFormatClass get() = this["java/lang/NumberFormatException"]
+val ClassManager.illegalArgumentClass get() = this["java/lang/IllegalArgumentException"]
+
+val ClassManager.runtimeException get() = this["java/lang/RuntimeException"]

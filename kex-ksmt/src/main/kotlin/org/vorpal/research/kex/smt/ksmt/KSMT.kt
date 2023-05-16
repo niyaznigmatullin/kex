@@ -1,6 +1,10 @@
 package org.vorpal.research.kex.smt.ksmt
 
-import org.vorpal.research.kex.smt.*
+import org.vorpal.research.kex.smt.SMTContext
+import org.vorpal.research.kex.smt.SMTConverter
+import org.vorpal.research.kex.smt.SMTExpr
+import org.vorpal.research.kex.smt.SMTExprFactory
+import org.vorpal.research.kex.smt.SMTMemory
 
 
 const val generateStrings = false
@@ -29,6 +33,7 @@ abstract class KSMTSMTMemory
     solver = "KSMT",
     importPackages = ["org.ksmt", "org.ksmt.decl", "org.ksmt.sort", "org.ksmt.expr"],
     context = "KContext",
+    contextInitializer = "simplificationMode = KContext.SimplificationMode.NO_SIMPLIFY",
     generateString = generateStrings
 )
 abstract class KSMTSMTExprFactory

@@ -1,6 +1,8 @@
 package org.vorpal.research.kex.serialization
 
-import kotlinx.serialization.*
+import kotlinx.serialization.KSerializer
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.SerializationException
 import kotlinx.serialization.builtins.MapSerializer
 import kotlinx.serialization.descriptors.SerialDescriptor
 import kotlinx.serialization.descriptors.buildClassSerialDescriptor
@@ -8,7 +10,13 @@ import kotlinx.serialization.descriptors.element
 import kotlinx.serialization.encoding.CompositeDecoder
 import kotlinx.serialization.encoding.Decoder
 import kotlinx.serialization.encoding.Encoder
-import org.vorpal.research.kex.descriptor.*
+import org.vorpal.research.kex.descriptor.ArrayDescriptor
+import org.vorpal.research.kex.descriptor.ClassDescriptor
+import org.vorpal.research.kex.descriptor.ConstantDescriptor
+import org.vorpal.research.kex.descriptor.Descriptor
+import org.vorpal.research.kex.descriptor.FieldContainingDescriptor
+import org.vorpal.research.kex.descriptor.ObjectDescriptor
+import org.vorpal.research.kex.descriptor.descriptor
 import org.vorpal.research.kex.ktype.KexArray
 import org.vorpal.research.kex.ktype.KexClass
 import org.vorpal.research.kex.ktype.KexType
@@ -18,7 +26,7 @@ import org.vorpal.research.kex.ktype.KexType
 internal value class Id(val name: String)
 
 @Serializable
-internal sealed class DescriptorWrapper() {
+internal sealed class DescriptorWrapper {
     abstract val id: Id
     abstract val type: KexType
 
@@ -164,8 +172,6 @@ private fun Descriptor.toWrapper(visited: MutableMap<Id, DescriptorWrapper>) {
     }
 }
 
-@ExperimentalSerializationApi
-@Serializer(forClass = Descriptor::class)
 internal class DescriptorSerializer : KSerializer<Descriptor> {
     private val context = mutableMapOf<Id, Descriptor>()
     private val idSerializer = Id.serializer()
@@ -202,7 +208,6 @@ internal class DescriptorSerializer : KSerializer<Descriptor> {
     }
 }
 
-@ExperimentalSerializationApi
 internal inline fun <reified T : Descriptor> DescriptorSerializer.to() = object : KSerializer<T> {
     override val descriptor get() = this@to.descriptor
 

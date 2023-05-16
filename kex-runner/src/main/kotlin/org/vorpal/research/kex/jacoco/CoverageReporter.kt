@@ -1,3 +1,5 @@
+@file:Suppress("MemberVisibilityCanBePrivate")
+
 package org.vorpal.research.kex.jacoco
 
 import org.jacoco.core.analysis.Analyzer
@@ -19,8 +21,10 @@ import org.vorpal.research.kex.launcher.AnalysisLevel
 import org.vorpal.research.kex.launcher.ClassLevel
 import org.vorpal.research.kex.launcher.MethodLevel
 import org.vorpal.research.kex.launcher.PackageLevel
+import org.vorpal.research.kex.util.asmString
 import org.vorpal.research.kex.util.compiledCodeDirectory
 import org.vorpal.research.kex.util.deleteOnExit
+import org.vorpal.research.kex.util.javaString
 import org.vorpal.research.kex.util.outputDirectory
 import org.vorpal.research.kfg.ClassManager
 import org.vorpal.research.kfg.Package
@@ -32,7 +36,12 @@ import org.vorpal.research.kthelper.tryOrNull
 import java.io.File
 import java.nio.file.Files
 import java.nio.file.Path
-import kotlin.io.path.*
+import kotlin.io.path.exists
+import kotlin.io.path.inputStream
+import kotlin.io.path.name
+import kotlin.io.path.readBytes
+import kotlin.io.path.relativeTo
+import kotlin.io.path.writeBytes
 import kotlin.streams.toList
 
 interface CoverageInfo {
@@ -122,9 +131,7 @@ abstract class CommonCoverageInfo(
         if (this === other) return true
         if (other !is CommonCoverageInfo) return false
 
-        if (name != other.name) return false
-
-        return true
+        return name == other.name
     }
 
     override fun hashCode(): Int {
@@ -232,7 +239,7 @@ class CoverageReporter(
                     .filter {
                         analysisLevel.pkg.isParent(
                             it.fullyQualifiedName(jacocoInstrumentedDir)
-                                .replace(Package.CANONICAL_SEPARATOR, Package.SEPARATOR)
+                                .asmString
                         )
                     }
                     .toList()
@@ -315,7 +322,7 @@ class CoverageReporter(
     }
 
     private val String.fullyQualifiedName: String
-        get() = removeSuffix(".class").replace(Package.SEPARATOR, Package.CANONICAL_SEPARATOR)
+        get() = removeSuffix(".class").javaString
 
     private fun Path.fullyQualifiedName(base: Path): String =
         relativeTo(base).toString()

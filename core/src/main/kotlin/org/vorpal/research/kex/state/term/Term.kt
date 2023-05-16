@@ -4,16 +4,15 @@ import kotlinx.serialization.Serializable
 import org.vorpal.research.kex.BaseType
 import org.vorpal.research.kex.InheritanceInfo
 import org.vorpal.research.kex.ktype.KexType
-import org.vorpal.research.kex.state.TypeInfo
+import org.vorpal.research.kex.state.InheritanceTypeInfo
 import org.vorpal.research.kex.state.transformer.Transformer
 import org.vorpal.research.kthelper.assert.fail
 import org.vorpal.research.kthelper.assert.unreachable
-import org.vorpal.research.kthelper.defaultHashCode
 import org.vorpal.research.kthelper.logging.log
 
 @BaseType("Term")
 @Serializable
-abstract class Term : TypeInfo {
+abstract class Term : InheritanceTypeInfo {
     abstract val name: String
     abstract val subTerms: List<Term>
     abstract val type: KexType
@@ -38,7 +37,14 @@ abstract class Term : TypeInfo {
     abstract fun <T : Transformer<T>> accept(t: Transformer<T>): Term
 
     override fun toString() = name
-    override fun hashCode() = defaultHashCode(name, type, subTerms)
+
+    override fun hashCode(): Int {
+        var result = name.hashCode()
+        result = 31 * result + subTerms.hashCode()
+        result = 31 * result + type.hashCode()
+        return result
+    }
+
     override fun equals(other: Any?): Boolean {
         if (this === other) return true
         if (other?.javaClass != this.javaClass) return false

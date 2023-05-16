@@ -42,4 +42,6 @@ interface AbstractAsyncSMTSolver : Closeable {
     suspend fun isReachableAsync(state: PredicateState): Result
     suspend fun isPathPossibleAsync(state: PredicateState, path: PredicateState): Result
     suspend fun isViolatedAsync(state: PredicateState, query: PredicateState): Result
+
+    suspend fun definitelyImplies(from: PredicateState, to: PredicateState): Boolean
 }

@@ -40,13 +40,13 @@ class $factory : ${solver}SMTExprFactory() {
         fun getTypeSize(type: KexType) = when (type.bitSize) {
             KexType.WORD -> TypeSize.WORD
             KexType.DWORD -> TypeSize.DWORD
-            else -> unreachable { log.error("Unknown type bit size ${type.bitSize}") }
+            else -> unreachable { log.error("Unknown type bit size ${ type.bitSize }") }
         }
 
         fun getByteSize(ctx: $context) = ${valexpr}.getStaticBitSize< Word_ >(ctx)
     }
 
-    val ctx = $context()
+    val ctx = $context($contextInitializer)
     val typeMap: Map< Type, Bitvector_ > get() = innerTypeMap
     var typeWidth: Int = 1
         private set
@@ -77,6 +77,7 @@ class $factory : ${solver}SMTExprFactory() {
 
     fun addClassNameAxioms(typeIndex: Bitvector_, nameVar: Ptr_): Bool_ {
         var res = makeFalse()
+        if (stringTerms.isEmpty()) return makeTrue()
         for ((type, typeVar) in innerTypeMap) {
             val string = type.javaDesc
             val stringTerm = stringTerms.getValue(string)
