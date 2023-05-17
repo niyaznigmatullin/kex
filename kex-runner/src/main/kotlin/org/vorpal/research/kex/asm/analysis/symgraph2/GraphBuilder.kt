@@ -32,7 +32,7 @@ class GraphBuilder(val ctx: ExecutionContext, klasses: Set<Class>) : TermBuilder
     private val coroutineContext = newFixedThreadPoolContextWithMDC(5, "abstract-caller")
     private var calls = 0
     private val activeStates = mutableSetOf<HeapState>()
-    private val allStates = mutableSetOf<HeapState>()
+    val allStates = mutableSetOf<HeapState>()
 
     val types: TypeFactory
         get() = ctx.types
