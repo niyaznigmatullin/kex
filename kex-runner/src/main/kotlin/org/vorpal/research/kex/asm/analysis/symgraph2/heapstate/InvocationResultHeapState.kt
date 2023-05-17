@@ -24,7 +24,7 @@ class InvocationResultHeapState(
     override fun additionalToString(stateEnumeration: Map<HeapState, Int>): String = buildString {
         append(parentState.additionalToString(stateEnumeration))
         append(" -> ")
-        append(stateEnumeration.getValue(this@InvocationResultHeapState))
+        append(stateEnumeration[this@InvocationResultHeapState])
         append("(")
         append(absCall.method)
         append(")")

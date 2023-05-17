@@ -209,7 +209,7 @@ abstract class HeapState(
     }
 
     fun toString(stateEnumeration: Map<HeapState, Int>) = buildString {
-        appendLine("[[${this@HeapState.javaClass.simpleName} #${stateEnumeration.getValue(this@HeapState)}]]")
+        appendLine("[[${this@HeapState.javaClass.simpleName} #${stateEnumeration[this@HeapState]}]]")
         appendLine(additionalToString(stateEnumeration))
         appendLine(objectGraphToString())
     }

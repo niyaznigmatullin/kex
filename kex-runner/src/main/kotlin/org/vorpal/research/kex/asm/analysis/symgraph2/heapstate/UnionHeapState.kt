@@ -20,9 +20,9 @@ class UnionHeapState(
     override fun additionalToString(stateEnumeration: Map<HeapState, Int>): String = buildString {
         append(firstParentState.additionalToString(stateEnumeration))
         append(" and ")
-        append(stateEnumeration.getValue(secondParentState))
+        append(stateEnumeration[secondParentState])
         append(" -> ")
-        append(stateEnumeration.getValue(this@UnionHeapState))
+        append(stateEnumeration[this@UnionHeapState])
     }
 
     override suspend fun restoreCalls(ctx: ExecutionContext, termValues: Map<Term, Descriptor>): RestorationResult {
