@@ -134,7 +134,10 @@ class KSMTSolver(private val executionContext: ExecutionContext) : AbstractSMTSo
         val ksmtFirstState = converter.convert(firstState, ef, ctx)
         val ksmtSecondBody = converter.convert(secondBody, ef, ctx)
         val vars = secondFreeTerms.map { converter.convert(it, ef, ctx).expr as KDecl<*> }
-        val quantifier = ef.ctx.mkExistentialQuantifier(ksmtSecondBody.asAxiom() as KExpr<KBoolSort>, vars)
+        val quantifier = when {
+            vars.isNotEmpty() -> ef.ctx.mkExistentialQuantifier(ksmtSecondBody.asAxiom() as KExpr<KBoolSort>, vars)
+            else -> ksmtSecondBody.asAxiom() as KExpr<KBoolSort>
+        }
         val notQuantifier = ef.ctx.mkNot(quantifier)
         val state = KSMTBool(ef.ctx, ef.ctx.mkAnd(ksmtFirstState.asAxiom() as KExpr<KBoolSort>, notQuantifier))
         log.debug("Check started")
