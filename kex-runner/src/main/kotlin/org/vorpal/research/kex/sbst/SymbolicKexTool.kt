@@ -4,8 +4,7 @@ import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.InternalSerializationApi
 import org.vorpal.research.kex.ExecutionContext
-import org.vorpal.research.kex.asm.analysis.symbolic.InstructionSymbolicChecker
-import org.vorpal.research.kex.asm.analysis.symbolic.SymbolicTraverser
+import org.vorpal.research.kex.asm.analysis.symgraph2.InstructionSymbolicCheckerGraph
 import org.vorpal.research.kex.asm.manager.ClassInstantiationDetector
 import org.vorpal.research.kex.asm.util.AccessModifier
 import org.vorpal.research.kex.config.FileConfig
@@ -130,7 +129,7 @@ class SymbolicKexTool : Tool {
         val klass = context.cm[canonicalName]
         log.debug("Running on klass $klass")
         try {
-            InstructionSymbolicChecker.run(context, klass.allMethods)
+            InstructionSymbolicCheckerGraph.run(context, klass.allMethods)
         } catch (e: Throwable) {
             log.error("Error: ", e)
         }
