@@ -54,9 +54,6 @@ class SymGraphGenerator(
             }
         }
         val result = graphBuilder.restoreActionSequences(objectDescriptors)
-        if (result == null) {
-            println(result)
-        }
         val (rootSequence, mapping) = result ?: return null
         val instance = descriptors.instance?.let { mapping.getValue(it as ObjectDescriptor) }
         val arguments = descriptors.arguments.map {

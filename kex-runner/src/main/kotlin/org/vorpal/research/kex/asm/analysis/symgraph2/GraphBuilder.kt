@@ -25,13 +25,14 @@ import org.vorpal.research.kfg.type.ClassType
 import org.vorpal.research.kfg.type.Type
 import org.vorpal.research.kfg.type.TypeFactory
 import kotlin.system.measureTimeMillis
+import org.vorpal.research.kthelper.logging.log
 
 class GraphBuilder(val ctx: ExecutionContext, klasses: Set<Class>) : TermBuilder {
     private val publicMethods = klasses.flatMap { it.allMethods }.filter { it.isPublic }
     private val coroutineContext = newFixedThreadPoolContextWithMDC(5, "abstract-caller")
     private var calls = 0
     private val activeStates = mutableSetOf<HeapState>()
-    private val allStates = mutableSetOf<HeapState>()
+    val allStates = mutableSetOf<HeapState>()
 
     val types: TypeFactory
         get() = ctx.types
@@ -130,6 +131,7 @@ class GraphBuilder(val ctx: ExecutionContext, klasses: Set<Class>) : TermBuilder
     private suspend fun addState(
         newState: HeapState
     ): Pair<HeapState?, HeapState?> {
+        log.debug("Trying to add new state: ${newState.toString(emptyMap())}")
         for (state in activeStates) {
             val objMap = state.checkIsomorphism(newState) ?: continue
             val fieldMapping = makeReverseFieldMapping(state, objMap)
@@ -216,6 +218,7 @@ class GraphBuilder(val ctx: ExecutionContext, klasses: Set<Class>) : TermBuilder
     }
 
     fun build(maxL: Int) {
+        log.debug("Building graph for methods: $publicMethods")
         runBlocking(coroutineContext) {
             val time = measureTimeMillis {
                 var oldStates = mutableSetOf<HeapState>(EmptyHeapState)
@@ -225,19 +228,19 @@ class GraphBuilder(val ctx: ExecutionContext, klasses: Set<Class>) : TermBuilder
                     if (oldStates.isEmpty()) {
                         break
                     }
-                    println("oldStates iteration $l: ${oldStates.size}")
+                    log.debug("oldStates iteration $l: ${oldStates.size}")
                     if (l == 0) {
-                        println(oldStates)
+                        log.debug("{}", oldStates)
                     }
                 }
-                println("the number of states = ${allStates.size}")
+                log.debug("the number of states = ${allStates.size}")
                 val stateEnumeration = allStates.withIndex().associate { (index, state) -> state to index }
-                println(allStates.joinToString(separator = "\n") { state ->
+                log.debug(allStates.joinToString(separator = "\n") { state ->
                     state.toString(stateEnumeration)
                 })
-                println("Abstract calls: $calls")
+                log.debug("Abstract calls: $calls")
             }
-            println("Took ${time}ms")
+            log.debug("Took ${time}ms")
         }
     }
 

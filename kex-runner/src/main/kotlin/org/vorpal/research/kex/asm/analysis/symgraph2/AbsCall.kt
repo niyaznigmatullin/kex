@@ -5,10 +5,11 @@ import org.vorpal.research.kex.asm.analysis.symgraph2.heapstate.HeapState
 import org.vorpal.research.kex.state.term.ArgumentTerm
 import org.vorpal.research.kex.state.term.Term
 import org.vorpal.research.kfg.ir.Method
+import org.vorpal.research.kthelper.logging.log
 
 data class AbsCall(val method: Method, val thisArg: GraphObject, val arguments: List<Argument>) {
     suspend fun call(ctx: ExecutionContext, state: HeapState): Collection<CallResult> {
-//        println("Calling here: $state, with abstract call $this")
+        log.debug("Calling here: $state, with abstract call $this")
         return MethodAbstractlyInvocator(ctx, method).invokeMethod(state, thisArg, arguments)
     }
 
