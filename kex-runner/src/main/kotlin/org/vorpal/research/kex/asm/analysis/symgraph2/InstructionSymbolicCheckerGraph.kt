@@ -10,9 +10,11 @@ import org.vorpal.research.kex.parameters.Parameters
 import org.vorpal.research.kex.reanimator.SymGraphGenerator
 import org.vorpal.research.kex.reanimator.UnsafeGenerator
 import org.vorpal.research.kex.reanimator.codegen.klassName
+import org.vorpal.research.kex.reanimator.codegen.packageName
 import org.vorpal.research.kex.util.newFixedThreadPoolContextWithMDC
 import org.vorpal.research.kfg.ir.Method
 import org.vorpal.research.kfg.ir.value.instruction.Instruction
+import org.vorpal.research.kfg.type.ClassType
 import org.vorpal.research.kthelper.logging.log
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.ExperimentalTime
@@ -38,7 +40,19 @@ class InstructionSymbolicCheckerGraph(
 
             val actualNumberOfExecutors = maxOf(1, minOf(executors, targets.size))
             val coroutineContext = newFixedThreadPoolContextWithMDC(actualNumberOfExecutors, "symbolic-dispatcher")
-            val graphBuilder = GraphBuilder(context, targets.map { it.klass }.toSet())
+            val graphBuilder = GraphBuilder(context, targets.flatMap { method ->
+                buildList {
+                    add(method.klass)
+                    addAll(method.argTypes.filterIsInstance<ClassType>().map { it.klass })
+//                    addAll(context.cm.getAllSubtypesOf(method.klass))
+//                    addAll(method.argTypes.flatMap {
+//                        when (it) {
+//                            is ClassType -> context.cm.getAllSubtypesOf(it.klass)
+//                            else -> emptyList()
+//                        }
+//                    })
+                }
+            }.toSet())
             graphBuilder.build(3)
             runBlocking(coroutineContext) {
                 withTimeoutOrNull(timeLimit.seconds) {

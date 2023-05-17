@@ -46,7 +46,7 @@ class MethodAbstractlyInvocator(
         thisArg: GraphObject,
         arguments: List<Argument>
     ): Collection<CallResult> {
-        if (thisArg == GraphObject.Null && !rootMethod.isStatic) {
+        if (thisArg == GraphObject.Null && (!rootMethod.isStatic && !rootMethod.isConstructor)) {
             return emptyList()
         }
         val initializer = ObjectInitializer(heapState.objects, thisArg, arguments)
@@ -66,8 +66,9 @@ class MethodAbstractlyInvocator(
             if (!rootMethod.isStatic) {
                 val thisTerm = `this`(rootMethod.klass.symbolicClass)
                 this[thisValue] = thisTerm
-                statePredicates.add(state { terms.getValue(thisArg) equality thisTerm })
-//                this[thisValue] = terms.getValue(thisArg)
+                if (!rootMethod.isConstructor) {
+                    statePredicates.add(state { terms.getValue(thisArg) equality thisTerm })
+                }
             }
             for ((index, type) in rootMethod.argTypes.withIndex()) {
                 val argTerm = arg(type.symbolicType, index)
@@ -180,6 +181,7 @@ class MethodAbstractlyInvocator(
             if (result != null) {
                 val returnTerm = when {
                     inst.hasReturnValue -> traverserState.mkTerm(inst.returnValue)
+                    rootMethod.isConstructor -> traverserState.mkTerm(values.getThis(rootMethod.klass))
                     else -> null
                 }
 //                println("objectsToLookAfter = $objectsToLookAfter")
@@ -309,7 +311,16 @@ class MethodAbstractlyInvocator(
     private fun collectNewObjectTerms(predicateState: PredicateState): Set<Term> {
         val collector = PredicateTermCollector { it is NewPredicate }
         collector.apply(predicateState)
-        return collector.terms
+        return if (!rootMethod.isConstructor) {
+            collector.terms
+        } else {
+            val thisCollector = TermCollector { it.name == "this" }
+            thisCollector.apply(predicateState)
+            buildSet {
+                addAll(collector.terms)
+                addAll(thisCollector.terms)
+            }
+        }
     }
 
     private fun getActiveDescriptors(
