@@ -34,4 +34,14 @@ class BuildGraphTest: KexRunnerTest("build-graph") {
         builder.build(2)
         assertEquals(9, builder.allStates.size)
     }
+
+    @Test
+    fun testWithArray() {
+        executePipeline(analysisContext.cm, Package.defaultPackage) {
+            +ClassInstantiationDetector(analysisContext)
+        }
+        val builder = GraphBuilder(analysisContext, setOf(cm["org/vorpal/research/kex/test/symgraph/WithArray"]))
+        builder.build(2)
+        assertEquals(1, builder.allStates.size)
+    }
 }

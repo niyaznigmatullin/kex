@@ -1,14 +1,13 @@
 package org.vorpal.research.kex.asm.analysis.symgraph2
 
-import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
-import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.*
 import org.vorpal.research.kex.ExecutionContext
 import org.vorpal.research.kex.asm.analysis.symgraph2.heapstate.EmptyHeapState
 import org.vorpal.research.kex.asm.analysis.symgraph2.heapstate.HeapState
 import org.vorpal.research.kex.asm.analysis.symgraph2.heapstate.InvocationResultHeapState
 import org.vorpal.research.kex.asm.analysis.symgraph2.heapstate.UnionHeapState
+import org.vorpal.research.kex.asm.analysis.symgraph2.objects.GraphObject
+import org.vorpal.research.kex.asm.analysis.symgraph2.objects.GraphVertex
 import org.vorpal.research.kex.descriptor.ObjectDescriptor
 import org.vorpal.research.kex.ktype.kexType
 import org.vorpal.research.kex.reanimator.actionsequence.ActionSequence
@@ -79,16 +78,20 @@ class GraphBuilder(val ctx: ExecutionContext, klasses: Set<Class>) : TermBuilder
 
     private suspend fun buildNewStateOrNull(state: HeapState, c: AbsCall, p: CallResult): HeapState? {
         val predicateState = state.predicateState + p.predicateState
-        val result = AsyncSMTProxySolver(ctx).use {
-            it.isPathPossibleAsync(predicateState, emptyState())
+        val result = withTimeoutOrNull(10000) {
+            AsyncSMTProxySolver(ctx).use {
+                it.isPathPossibleAsync(predicateState, emptyState())
+            }
         }
-        if (result == Result.UnsatResult) {
+        if (result == null || result == Result.UnsatResult) {
             return null
         }
         val namedTerms = buildSet {
             addAll(collectTerms(predicateState) { it.isNamed })
             for (obj in p.objects) {
-                addAll(obj.primitiveFields.values)
+                when (obj) {
+                    is GraphObject -> addAll(obj.primitiveFields.values)
+                }
             }
         }.associateWith { generate(it.type) }
         val replacedPredicateState = TermRemapper(namedTerms).apply(predicateState)
@@ -115,14 +118,18 @@ class GraphBuilder(val ctx: ExecutionContext, klasses: Set<Class>) : TermBuilder
 
     private fun makeReverseFieldMapping(
         state: HeapState,
-        mapping: Map<GraphObject, GraphObject>
+        mapping: Map<GraphVertex, GraphVertex>
     ): Map<Term, Term> {
         return buildMap {
             for (obj1 in state.objects) {
-                val obj2 = mapping.getValue(obj1)
-                for ((field, term2) in obj2.primitiveFields) {
-                    val term1 = obj1.primitiveFields.getValue(field)
-                    put(term2, term1)
+                when (obj1) {
+                    is GraphObject -> {
+                        val obj2 = mapping.getValue(obj1) as GraphObject
+                        for ((field, term2) in obj2.primitiveFields) {
+                            val term1 = obj1.primitiveFields.getValue(field)
+                            put(term2, term1)
+                        }
+                    }
                 }
             }
         }
@@ -157,7 +164,7 @@ class GraphBuilder(val ctx: ExecutionContext, klasses: Set<Class>) : TermBuilder
     private fun merge(
         oldState: HeapState,
         newState: HeapState,
-        mappingOldToNew: Map<GraphObject, GraphObject>,
+        mappingOldToNew: Map<GraphVertex, GraphVertex>,
         termsNewToOld: Map<Term, Term>,
         mappedNewPredicateState: PredicateState,
     ): UnionHeapState {
@@ -175,16 +182,16 @@ class GraphBuilder(val ctx: ExecutionContext, klasses: Set<Class>) : TermBuilder
         private val argumentsList = mutableListOf<Argument>()
         private val callsList = mutableListOf<AbsCall>()
 
-        private fun getAllObjectsOfSubtype(type: Type): List<GraphObject> {
+        private fun getAllObjectsOfSubtype(type: Type): List<GraphVertex> {
             return state.activeObjects.filter {
-                it.type.isSubtypeOf(this@GraphBuilder.types, type.kexType) || it == GraphObject.Null
+                it.type.isSubtypeOf(this@GraphBuilder.types, type.kexType) || it == GraphVertex.Null
             }
         }
 
         private fun backtrack(currentArgumentIndex: Int) {
             if (currentArgumentIndex == m.argTypes.size) {
                 val thisCandidates = if (m.isStatic) {
-                    listOf(GraphObject.Null)
+                    listOf(GraphVertex.Null)
                 } else {
                     getAllObjectsOfSubtype(m.klass.asType)
                 }

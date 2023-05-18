@@ -1,7 +1,8 @@
 package org.vorpal.research.kex.asm.analysis.symgraph2.heapstate
 
 import org.vorpal.research.kex.ExecutionContext
-import org.vorpal.research.kex.asm.analysis.symgraph2.GraphObject
+import org.vorpal.research.kex.asm.analysis.symgraph2.objects.GraphObject
+import org.vorpal.research.kex.asm.analysis.symgraph2.objects.GraphVertex
 import org.vorpal.research.kex.descriptor.ConstantDescriptor
 import org.vorpal.research.kex.descriptor.Descriptor
 import org.vorpal.research.kex.descriptor.ObjectDescriptor
@@ -17,14 +18,14 @@ import org.vorpal.research.kex.state.predicate.state
 import org.vorpal.research.kex.state.term.Term
 
 abstract class HeapState(
-    val objects: Collection<GraphObject>,
-    val activeObjects: Set<GraphObject>,
+    val objects: Collection<GraphVertex>,
+    val activeObjects: Set<GraphVertex>,
     val predicateState: PredicateState,
     val terms: Set<Term>,
 ) {
 
     private val stateToIndex = objects.withIndex().associate { (i, v) ->
-        val id = if (v == GraphObject.Null) {
+        val id = if (v == GraphVertex.Null) {
             "null"
         } else if (activeObjects.contains(v)) {
             "a$i"
@@ -34,7 +35,7 @@ abstract class HeapState(
         Pair(v, id)
     }
 
-    fun getObjectIndex(obj: GraphObject) = stateToIndex.getValue(obj)
+    fun getObjectIndex(obj: GraphVertex) = stateToIndex.getValue(obj)
 
     class PermutationGenerator(n: Int) {
         val p = IntArray(n) { it }
@@ -59,7 +60,7 @@ abstract class HeapState(
         }
     }
 
-    fun checkIsomorphism(other: HeapState): Map<GraphObject, GraphObject>? {
+    fun checkIsomorphism(other: HeapState): Map<GraphVertex, GraphVertex>? {
         if (objects.size != other.objects.size || activeObjects.size != other.activeObjects.size) {
             return null
         }
@@ -94,11 +95,11 @@ abstract class HeapState(
     }
 
     private fun checkIsomorphismImpl(
-        mapping: Map<GraphObject, GraphObject>,
-        reverseMapping: Map<GraphObject, GraphObject>,
-        activeDescriptors: Set<GraphObject>,
-        otherActiveDescriptors: Set<GraphObject>,
-    ): Map<GraphObject, GraphObject>? {
+        mapping: Map<GraphVertex, GraphVertex>,
+        reverseMapping: Map<GraphVertex, GraphVertex>,
+        activeDescriptors: Set<GraphVertex>,
+        otherActiveDescriptors: Set<GraphVertex>,
+    ): Map<GraphVertex, GraphVertex>? {
         if (activeDescriptors.all { mapping.containsKey(it) }) {
             check(otherActiveDescriptors.all { reverseMapping.containsKey(it) })
             return mapping
@@ -121,37 +122,40 @@ abstract class HeapState(
     }
 
     private fun tryAddMapping(
-        mapping: MutableMap<GraphObject, GraphObject>,
-        reverseMapping: MutableMap<GraphObject, GraphObject>,
-        obj: GraphObject,
-        mapTo: GraphObject,
-        activeDescriptors: Set<GraphObject>,
-        otherActiveDescriptors: Set<GraphObject>,
+        mapping: MutableMap<GraphVertex, GraphVertex>,
+        reverseMapping: MutableMap<GraphVertex, GraphVertex>,
+        obj: GraphVertex,
+        mapTo: GraphVertex,
+        activeDescriptors: Set<GraphVertex>,
+        otherActiveDescriptors: Set<GraphVertex>,
     ): Boolean {
         if (obj.type != mapTo.type || (obj in activeDescriptors) != (mapTo in otherActiveDescriptors)) {
             return false
         }
         mapping[obj] = mapTo
         reverseMapping[mapTo] = obj
-        if (obj != GraphObject.Null) {
-            for ((field, value) in obj.objectFields) {
-                val otherValue = mapTo.objectFields.getValue(field)
-                val map1 = mapping[value]
-                val map2 = reverseMapping[otherValue]
-                if (map1 == null && map2 == null) {
-                    if (!tryAddMapping(
-                            mapping,
-                            reverseMapping,
-                            value,
-                            otherValue,
-                            activeDescriptors,
-                            otherActiveDescriptors
-                        )
-                    ) {
+        when (obj) {
+            is GraphObject -> {
+                mapTo as GraphObject
+                for ((field, value) in obj.objectFields) {
+                    val otherValue = mapTo.objectFields.getValue(field)
+                    val map1 = mapping[value]
+                    val map2 = reverseMapping[otherValue]
+                    if (map1 == null && map2 == null) {
+                        if (!tryAddMapping(
+                                mapping,
+                                reverseMapping,
+                                value,
+                                otherValue,
+                                activeDescriptors,
+                                otherActiveDescriptors
+                            )
+                        ) {
+                            return false
+                        }
+                    } else if (map1 != otherValue && map2 != value) {
                         return false
                     }
-                } else if (map1 != otherValue && map2 != value) {
-                    return false
                 }
             }
         }
@@ -159,11 +163,11 @@ abstract class HeapState(
     }
 
     private fun checkMapping(
-        a: List<GraphObject>,
-        b: List<GraphObject>,
+        a: List<GraphVertex>,
+        b: List<GraphVertex>,
         other: HeapState,
-        indexA: Map<GraphObject, Int>,
-        indexB: Map<GraphObject, Int>,
+        indexA: Map<GraphVertex, Int>,
+        indexB: Map<GraphVertex, Int>,
         p: IntArray
     ): Boolean {
         for ((i, x) in a.withIndex()) {
@@ -177,9 +181,14 @@ abstract class HeapState(
             if (x.type !is KexClass) {
                 continue
             }
-            for ((field, value) in x.objectFields) {
-                if (p[indexA.getValue(value)] != indexB[y.objectFields[field]]) {
-                    return false
+            when (x) {
+                is GraphObject -> {
+                    y as GraphObject
+                    for ((field, value) in x.objectFields) {
+                        if (p[indexA.getValue(value)] != indexB[y.objectFields[field]]) {
+                            return false
+                        }
+                    }
                 }
             }
         }
@@ -192,17 +201,27 @@ abstract class HeapState(
             if (d.type !is KexClass) {
                 continue
             }
-            for ((_, value) in d.objectFields) {
-                val from = stateToIndex.getValue(d)
-                val to = stateToIndex.getValue(value)
-                appendLine("$from -> $to")
+            when (d) {
+                is GraphObject -> {
+                    for ((_, value) in d.objectFields) {
+                        val from = stateToIndex.getValue(d)
+                        val to = stateToIndex.getValue(value)
+                        appendLine("$from -> $to")
+                    }
+                }
             }
         }
         for (obj in objects) {
             val objName = stateToIndex.getValue(obj)
-            val objFields = obj.primitiveFields.map { (field, value) ->
-                ".${field.first} = $value"
-            }.joinToString(", ")
+            val objFields = when (obj) {
+                is GraphObject -> {
+                    obj.primitiveFields.map { (field, value) ->
+                        ".${field.first} = $value"
+                    }.joinToString(", ")
+                }
+
+                else -> ""
+            }
             appendLine("  Object $objName { $objFields }")
         }
         appendLine("With state: \n $predicateState")
@@ -250,7 +269,7 @@ abstract class HeapState(
     }
 
     class RestorationResult(
-        val objectGenerators: Map<GraphObject, ActionSequence>,
+        val objectGenerators: Map<GraphVertex, ActionSequence>,
         val rootSequence: List<ActionSequence>
     )
 
@@ -284,7 +303,7 @@ abstract class HeapState(
 //                println("Concrete Predicate State: $concretePredicateState")
                 return ConcreteMapping(mapping, terms)
             }
-            for (mapTo in activeObjects.filter { !reverseMapping.containsKey(it) }) {
+            for (mapTo in activeObjects.filterIsInstance<GraphObject>().filter { !reverseMapping.containsKey(it) }) {
                 val newMapping = mapping.toMutableMap()
                 val newReverseMapping = reverseMapping.toMutableMap()
                 if (!tryAddMapping(newMapping, newReverseMapping, descriptor, mapTo)) {
@@ -319,6 +338,7 @@ abstract class HeapState(
                     continue
                 }
                 value as ObjectDescriptor
+                otherValue as GraphObject
                 val map1 = mapping[value]
                 val map2 = reverseMapping[otherValue]
                 if (map1 == null && map2 == null) {
