@@ -1,7 +1,7 @@
 package org.vorpal.research.kex.asm.analysis.symgraph2.heapstate
 
 import org.vorpal.research.kex.ExecutionContext
-import org.vorpal.research.kex.asm.analysis.symgraph2.GraphObject
+import org.vorpal.research.kex.asm.analysis.symgraph2.objects.GraphVertex
 import org.vorpal.research.kex.descriptor.Descriptor
 import org.vorpal.research.kex.state.PredicateState
 import org.vorpal.research.kex.state.term.Term
@@ -11,7 +11,7 @@ class UnionHeapState(
     terms: Set<Term>,
     private val firstParentState: HeapState,
     private val secondParentState: HeapState,
-    objMappingToSecondParent: Map<GraphObject, GraphObject>,
+    objMappingToSecondParent: Map<GraphVertex, GraphVertex>,
     private val termMappingToSecondParent: Map<Term, Term>,
 ) : HeapState(firstParentState.objects, firstParentState.activeObjects, predicateState, terms) {
 

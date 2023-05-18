@@ -2,6 +2,7 @@ package org.vorpal.research.kex.asm.analysis.symgraph2.heapstate
 
 import org.vorpal.research.kex.ExecutionContext
 import org.vorpal.research.kex.asm.analysis.symgraph2.*
+import org.vorpal.research.kex.asm.analysis.symgraph2.objects.GraphVertex
 import org.vorpal.research.kex.asm.state.PredicateStateAnalysis
 import org.vorpal.research.kex.descriptor.Descriptor
 import org.vorpal.research.kex.reanimator.actionsequence.*
@@ -12,14 +13,14 @@ import org.vorpal.research.kex.state.term.Term
 import org.vorpal.research.kthelper.assert.unreachable
 
 class InvocationResultHeapState(
-    objects: Collection<GraphObject>,
-    activeObjects: Set<GraphObject>,
+    objects: Collection<GraphVertex>,
+    activeObjects: Set<GraphVertex>,
     predicateState: PredicateState,
     private val absCall: AbsCall,
     private val parentState: HeapState,
     private val termMappingToParent: Map<Term, Term>,
-    private val activeObjectsMappingFromParent: Map<GraphObject, GraphObject>,
-    private val returnValue: GraphObject?
+    private val activeObjectsMappingFromParent: Map<GraphVertex, GraphVertex>,
+    private val returnValue: GraphVertex?
 ) : HeapState(objects, activeObjects, predicateState, termMappingToParent.keys) {
     override fun additionalToString(stateEnumeration: Map<HeapState, Int>): String = buildString {
         append(parentState.additionalToString(stateEnumeration))
@@ -53,7 +54,7 @@ class InvocationResultHeapState(
     private fun generateMethodCallSequence(
         termValues: Map<Term, Descriptor>,
         actionSequenceGenerator: ConstantGenerator,
-        oldObjActions: Map<GraphObject, ActionSequence>,
+        oldObjActions: Map<GraphVertex, ActionSequence>,
         name: String,
     ): ActionSequence {
         val method = absCall.method
