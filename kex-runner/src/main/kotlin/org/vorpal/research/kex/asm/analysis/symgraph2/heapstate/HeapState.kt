@@ -16,6 +16,7 @@ import org.vorpal.research.kex.state.PredicateState
 import org.vorpal.research.kex.state.emptyState
 import org.vorpal.research.kex.state.predicate.state
 import org.vorpal.research.kex.state.term.Term
+import org.vorpal.research.kthelper.logging.log
 
 abstract class HeapState(
     val objects: Collection<GraphVertex>,
@@ -138,7 +139,7 @@ abstract class HeapState(
             is GraphObject -> {
                 mapTo as GraphObject
                 for ((field, value) in obj.objectFields) {
-                    val otherValue = mapTo.objectFields.getValue(field)
+                    val otherValue = mapTo.objectFields.getOrDefault(field, GraphVertex.Null)
                     val map1 = mapping[value]
                     val map2 = reverseMapping[otherValue]
                     if (map1 == null && map2 == null) {
@@ -330,12 +331,18 @@ abstract class HeapState(
                     is KexNull, is KexClass -> {}
                     else -> continue
                 }
-                val otherValue = mapTo.objectFields.getValue(field)
+                if (!mapTo.objectFields.containsKey(field)) {
+                    log.debug("Not found, objectFields = ${mapTo.objectFields}")
+                }
+                val otherValue = mapTo.objectFields.getOrDefault(field, GraphVertex.Null)
                 if (value == ConstantDescriptor.Null) {
                     if (otherValue.type !is KexNull) {
                         return false
                     }
                     continue
+                }
+                if (otherValue.type is KexNull) {
+                    return false
                 }
                 value as ObjectDescriptor
                 otherValue as GraphObject

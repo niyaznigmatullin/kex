@@ -14,7 +14,7 @@ class GraphObject(type: KexClass) : GraphVertex(type) {
 
     override fun remapTerms(mapping: Map<Term, Term>) {
         primitiveFields = primitiveFields.mapValues { (_, value) ->
-            mapping.getValue(value)
+            mapping.getOrDefault(value, value)
         }
     }
 }

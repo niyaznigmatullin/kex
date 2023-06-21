@@ -113,7 +113,7 @@ open class ActionSequence2JavaPrinter(
         }
     }
 
-    private fun buildMethodCall(
+    protected fun buildMethodCall(
         method: org.vorpal.research.kfg.ir.Method, actionSequences: Parameters<ActionSequence>
     ): ActionSequence = when {
         method.isStatic -> TestCall("test${testCounter++}", method, null, actionSequences.arguments)
@@ -709,6 +709,9 @@ open class ActionSequence2JavaPrinter(
         val method = call.method
         val instance = instancePrinter(call.instance)
         val args = argsPrinter(call.args)
+        if (method.returnType.isVoid) {
+            return listOf("$instance.${method.name}($args)")
+        }
 
         val reflection = ctx.loader.loadClass(call.method.klass)
         val ctor = reflection.getMethod(call.method, ctx.loader)

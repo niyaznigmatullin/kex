@@ -216,7 +216,7 @@ class MethodAbstractlyInvocator(
         val representersByDescriptor = representerObjects.associateBy {
             objectDescriptors.getValue(it)
         }
-        val mapToRepresenter = objectDescriptors.filterValues { it.type !is KexNull }
+        val mapToRepresenter = objectDescriptors.filterValues { it is ObjectDescriptor }
             .mapValues { (_, descriptor) ->
                 representersByDescriptor.getValue(descriptor)
             }
@@ -239,6 +239,7 @@ class MethodAbstractlyInvocator(
                     val representer = representersByDescriptor.getValue(descriptor)
                     fillObjectFields(obj, descriptor as ObjectDescriptor, mapping, fields, representer)
                 }
+
                 else -> {}
             }
         }
@@ -324,7 +325,7 @@ class MethodAbstractlyInvocator(
     }
 
     private fun collectNewObjectTerms(predicateState: PredicateState): Set<Term> {
-        val collector = PredicateTermCollector { it is NewPredicate }
+        val collector = PredicateTermCollector { it is NewPredicate || it is NewInitializerPredicate }
         collector.apply(predicateState)
         return if (!rootMethod.isConstructor) {
             collector.terms
