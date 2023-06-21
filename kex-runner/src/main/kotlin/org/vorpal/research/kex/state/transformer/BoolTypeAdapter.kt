@@ -1,16 +1,11 @@
 package org.vorpal.research.kex.state.transformer
 
-import org.vorpal.research.kex.ktype.KexBool
-import org.vorpal.research.kex.ktype.KexInt
-import org.vorpal.research.kex.ktype.KexInteger
-import org.vorpal.research.kex.ktype.mergeTypes
+import org.vorpal.research.kex.ktype.*
 import org.vorpal.research.kex.state.predicate.EqualityPredicate
+import org.vorpal.research.kex.state.predicate.FieldStorePredicate
 import org.vorpal.research.kex.state.predicate.Predicate
 import org.vorpal.research.kex.state.predicate.predicate
-import org.vorpal.research.kex.state.term.BinaryTerm
-import org.vorpal.research.kex.state.term.CmpTerm
-import org.vorpal.research.kex.state.term.Term
-import org.vorpal.research.kex.state.term.term
+import org.vorpal.research.kex.state.term.*
 import org.vorpal.research.kfg.ir.value.instruction.BinaryOpcode
 import org.vorpal.research.kfg.type.TypeFactory
 import org.vorpal.research.kthelper.assert.unreachable
@@ -26,6 +21,31 @@ class BoolTypeAdapter(val types: TypeFactory) : Transformer<BoolTypeAdapter> {
             lhv.type is KexBool && rhv.type is KexInt -> predicate(type, loc) { lhv equality (rhv `as` KexBool) }
             lhv.type is KexInt && rhv.type is KexBool -> predicate(type, loc) { lhv equality (rhv `as` KexInt) }
             else -> predicate
+        }
+    }
+
+    override fun transformFieldStorePredicate(predicate: FieldStorePredicate): Predicate {
+        val lhv = predicate.field
+        val rhv = predicate.value
+        val type = predicate.type
+        val loc = predicate.location
+        val lhvType = (lhv.type as KexReference).reference
+        return when {
+            lhvType is KexBool && rhv.type is KexInt -> predicate(type, loc) { lhv.store(rhv `as` KexBool) }
+            lhvType is KexInt && rhv.type is KexBool -> predicate(type, loc) { lhv.store(rhv `as` KexInt) }
+            else -> predicate
+        }
+    }
+
+    override fun transformEqualsTerm(term: EqualsTerm): Term {
+        val lhv = term.lhv
+        val rhv = term.rhv
+        val bothOfThemAreInt = lhv.type is KexInteger && rhv.type is KexInteger
+        val oneOfThemIsBool = lhv.type is KexBool || rhv.type is KexBool
+        return when {
+            lhv.type == rhv.type -> term
+            oneOfThemIsBool && bothOfThemAreInt -> term { (lhv `as` KexBool) eq (rhv `as` KexBool) }
+            else -> term
         }
     }
 
