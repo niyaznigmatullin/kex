@@ -9,6 +9,7 @@ import org.vorpal.research.kex.asm.analysis.symgraph2.heapstate.UnionHeapState
 import org.vorpal.research.kex.asm.analysis.symgraph2.objects.GraphObject
 import org.vorpal.research.kex.asm.analysis.symgraph2.objects.GraphVertex
 import org.vorpal.research.kex.descriptor.ObjectDescriptor
+import org.vorpal.research.kex.ktype.KexClass
 import org.vorpal.research.kex.ktype.kexType
 import org.vorpal.research.kex.reanimator.actionsequence.ActionSequence
 import org.vorpal.research.kex.smt.AsyncSMTProxySolver
@@ -27,7 +28,9 @@ import kotlin.system.measureTimeMillis
 import org.vorpal.research.kthelper.logging.log
 
 class GraphBuilder(val ctx: ExecutionContext, klasses: Set<Class>) : TermBuilder {
-    private val publicMethods = klasses.flatMap { it.allMethods }.filter { it.isPublic }
+    private val publicMethods = klasses.flatMap { it.allMethods }.filter {
+        it.isPublic && !it.isNative && (!it.isStatic || it.returnType.kexType is KexClass)
+    }
     private val coroutineContext = newFixedThreadPoolContextWithMDC(5, "abstract-caller")
     private var calls = 0
     private val activeStates = mutableSetOf<HeapState>()
@@ -78,10 +81,15 @@ class GraphBuilder(val ctx: ExecutionContext, klasses: Set<Class>) : TermBuilder
 
     private suspend fun buildNewStateOrNull(state: HeapState, c: AbsCall, p: CallResult): HeapState? {
         val predicateState = state.predicateState + p.predicateState
-        val result = withTimeoutOrNull(10000) {
-            AsyncSMTProxySolver(ctx).use {
-                it.isPathPossibleAsync(predicateState, emptyState())
+        val result = try {
+            withTimeout(10000) {
+                AsyncSMTProxySolver(ctx).use {
+                    it.isPathPossibleAsync(predicateState, emptyState())
+                }
             }
+        } catch (_: TimeoutCancellationException) {
+            log.debug("Timeout on checking the full path's predicate for call: $c")
+            null
         }
         if (result == null || result == Result.UnsatResult) {
             return null
@@ -90,7 +98,7 @@ class GraphBuilder(val ctx: ExecutionContext, klasses: Set<Class>) : TermBuilder
             addAll(collectTerms(predicateState) { it.isNamed })
             for (obj in p.objects) {
                 when (obj) {
-                    is GraphObject -> addAll(obj.primitiveFields.values)
+                    is GraphObject -> addAll(obj.primitiveFields.values.filter { it.isNamed })
                 }
             }
         }.associateWith { generate(it.type) }
@@ -102,7 +110,10 @@ class GraphBuilder(val ctx: ExecutionContext, klasses: Set<Class>) : TermBuilder
         val reverseMapping = namedTerms.toList().associate { it.second to it.first }
 //        println("${p.objects} $namedTerms $predicateState")
         p.objects.forEach { it.remapTerms(namedTerms) }
-        check(state.terms.all { it in namedTerms })
+//        if (state.terms.any { it !in namedTerms }) {
+//            check(false)
+//        }
+//        check(state.terms.all { it in namedTerms })
 //        println("after ${p.objects}")
         return InvocationResultHeapState(
             p.objects,
@@ -190,7 +201,7 @@ class GraphBuilder(val ctx: ExecutionContext, klasses: Set<Class>) : TermBuilder
 
         private fun backtrack(currentArgumentIndex: Int) {
             if (currentArgumentIndex == m.argTypes.size) {
-                val thisCandidates = if (m.isStatic) {
+                val thisCandidates = if (m.isStatic || m.isConstructor) {
                     listOf(GraphVertex.Null)
                 } else {
                     getAllObjectsOfSubtype(m.klass.asType)

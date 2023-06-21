@@ -12,7 +12,7 @@ import org.vorpal.research.kthelper.logging.log
 data class AbsCall(val method: Method, val thisArg: GraphVertex, val arguments: List<Argument>) {
     suspend fun call(ctx: ExecutionContext, state: HeapState): Collection<CallResult> {
         return withTimeoutOrNull(20000) {
-            log.debug("Calling here: $state, with abstract call $this")
+            log.debug("Calling here: $state, with abstract call ${this@AbsCall}")
             MethodAbstractlyInvocator(ctx, method).invokeMethod(state, thisArg, arguments)
         } ?: emptyList()
     }

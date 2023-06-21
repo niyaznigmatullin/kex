@@ -10,7 +10,6 @@ import org.vorpal.research.kex.parameters.Parameters
 import org.vorpal.research.kex.reanimator.SymGraphGenerator
 import org.vorpal.research.kex.reanimator.UnsafeGenerator
 import org.vorpal.research.kex.reanimator.codegen.klassName
-import org.vorpal.research.kex.reanimator.codegen.packageName
 import org.vorpal.research.kex.util.newFixedThreadPoolContextWithMDC
 import org.vorpal.research.kfg.ir.Method
 import org.vorpal.research.kfg.ir.value.instruction.Instruction
@@ -43,7 +42,7 @@ class InstructionSymbolicCheckerGraph(
             val graphBuilder = GraphBuilder(context, targets.flatMap { method ->
                 buildList {
                     add(method.klass)
-                    addAll(method.argTypes.filterIsInstance<ClassType>().map { it.klass })
+                    addAll(method.argTypes.filterIsInstance<ClassType>().map { it.klass }.filter { it.pkg.canonicalName == method.klass.pkg.canonicalName })
 //                    addAll(context.cm.getAllSubtypesOf(method.klass))
 //                    addAll(method.argTypes.flatMap {
 //                        when (it) {
@@ -53,7 +52,7 @@ class InstructionSymbolicCheckerGraph(
 //                    })
                 }
             }.toSet())
-            graphBuilder.build(3)
+            graphBuilder.build(5)
             runBlocking(coroutineContext) {
                 withTimeoutOrNull(timeLimit.seconds) {
                     targets.map {
@@ -76,15 +75,16 @@ class InstructionSymbolicCheckerGraph(
             rootMethod.klassName + testPostfix + testIndex.getAndIncrement() + "graph",
             graphBuilder
         );
+        val generator = UnsafeGenerator(
+            ctx,
+            rootMethod,
+            rootMethod.klassName + testPostfix + testIndex.getAndIncrement()
+        )
+        generator.generate(parameters)
         val testFile = if (generatorGraph.generate(parameters)) {
+            generator.emit()
             generatorGraph.emit()
         } else {
-            val generator = UnsafeGenerator(
-                ctx,
-                rootMethod,
-                rootMethod.klassName + testPostfix + testIndex.getAndIncrement()
-            )
-            generator.generate(parameters)
             generator.emit()
         }
         try {

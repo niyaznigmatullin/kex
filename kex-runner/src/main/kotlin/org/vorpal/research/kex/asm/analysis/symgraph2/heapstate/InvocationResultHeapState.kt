@@ -11,6 +11,7 @@ import org.vorpal.research.kex.reanimator.actionsequence.generator.GeneratorCont
 import org.vorpal.research.kex.state.PredicateState
 import org.vorpal.research.kex.state.term.Term
 import org.vorpal.research.kthelper.assert.unreachable
+import org.vorpal.research.kthelper.logging.log
 
 class InvocationResultHeapState(
     objects: Collection<GraphVertex>,
@@ -33,8 +34,11 @@ class InvocationResultHeapState(
 
     override suspend fun restoreCalls(ctx: ExecutionContext, termValues: Map<Term, Descriptor>): RestorationResult {
         val actionSequenceGenerator = ConstantGenerator(GeneratorContext(ctx, PredicateStateAnalysis(ctx.cm)))
+//        log.debug("terms: $termValues and $terms")
         check(checkPredicateState(ctx, termValues))
         val parentTermVals = termMappingToParent.map { it.value to termValues.getValue(it.key) }.toMap()
+            .filterKeys { parentState.terms.contains(it) }
+//        log.debug("parent terms: $parentTermVals")
         val oldResult = parentState.restoreCalls(ctx, parentTermVals)
         val oldObjActions = oldResult.objectGenerators
         val methodCall = generateMethodCallSequence(termValues, actionSequenceGenerator, oldObjActions, "v${hashCode()}")
