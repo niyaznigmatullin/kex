@@ -220,7 +220,7 @@ class MethodAbstractlyInvocator(
             .mapValues { (_, descriptor) ->
                 representersByDescriptor.getValue(descriptor)
             }
-        var updatedState = predicateState
+        var updatedState = BoolTypeAdapter(ctx.types).transform(predicateState)
         val fields = extractValues(termsOfFieldsBefore, mapToRepresenter, updatedState).let { (fields, state) ->
             updatedState = state
             fields
