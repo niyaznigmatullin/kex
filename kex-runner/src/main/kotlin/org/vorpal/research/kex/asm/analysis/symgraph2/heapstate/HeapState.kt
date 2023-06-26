@@ -321,7 +321,7 @@ abstract class HeapState(
             desc: ObjectDescriptor,
             mapTo: GraphObject,
         ): Boolean {
-            if (desc.type != mapTo.type || (desc in activeObjectDesc) != (mapTo in activeObjects)) {
+            if (desc.type != mapTo.type || (desc in activeObjectDesc && mapTo !in activeObjects)) {
                 return false
             }
             mapping[desc] = mapTo

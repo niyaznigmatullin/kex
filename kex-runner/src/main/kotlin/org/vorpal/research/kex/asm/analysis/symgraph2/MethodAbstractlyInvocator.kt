@@ -79,6 +79,18 @@ class MethodAbstractlyInvocator(
                 }
             }
         }
+        val thisAndArgs = buildSet {
+            add(terms.getValue(thisArg))
+            addAll(arguments.filterIsInstance<ObjectArgument>().map { terms.getValue(it.obj) })
+        }
+        for (x in thisAndArgs) {
+            for (y in thisAndArgs) {
+                if (x == y) break
+                statePredicates.add(state {
+                    x inequality y
+                })
+            }
+        }
         val initialTypeInfo = terms.map { (obj, term) ->
             val kfgType = when (term.type) {
                 is KexNull -> NullType

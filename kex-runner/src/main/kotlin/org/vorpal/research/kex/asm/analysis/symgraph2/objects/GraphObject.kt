@@ -9,7 +9,8 @@ class GraphObject(type: KexClass) : GraphVertex(type) {
     var primitiveFields = emptyMap<Pair<String, KexType>, Term>()
 
     override fun toString(): String {
-        return "GraphObject(type=$type, primitiveFields=$primitiveFields)"
+        val reference = super.hashCode().toString(16)
+        return "GraphObject#$reference(type=$type, primitiveFields=$primitiveFields)"
     }
 
     override fun remapTerms(mapping: Map<Term, Term>) {

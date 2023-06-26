@@ -204,7 +204,7 @@ class GraphBuilder(val ctx: ExecutionContext, klasses: Set<Class>) : TermBuilder
                 val thisCandidates = if (m.isStatic || m.isConstructor) {
                     listOf(GraphVertex.Null)
                 } else {
-                    getAllObjectsOfSubtype(m.klass.asType)
+                    getAllObjectsOfSubtype(m.klass.asType).filter { it != GraphVertex.Null }
                 }
                 for (thisArg in thisCandidates) {
                     callsList.add(AbsCall(m, thisArg, argumentsList.toList()))
