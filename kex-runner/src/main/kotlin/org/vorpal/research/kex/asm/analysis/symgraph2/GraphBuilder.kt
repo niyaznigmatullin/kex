@@ -26,6 +26,7 @@ import org.vorpal.research.kfg.type.Type
 import org.vorpal.research.kfg.type.TypeFactory
 import kotlin.system.measureTimeMillis
 import org.vorpal.research.kthelper.logging.log
+import kotlin.time.Duration.Companion.milliseconds
 
 class GraphBuilder(val ctx: ExecutionContext, klasses: Set<Class>) : TermBuilder {
     private val publicMethods = klasses.flatMap { it.allMethods }.filter {
@@ -154,10 +155,12 @@ class GraphBuilder(val ctx: ExecutionContext, klasses: Set<Class>) : TermBuilder
             val objMap = state.checkIsomorphism(newState) ?: continue
             val fieldMapping = makeReverseFieldMapping(state, objMap)
             val mappedNewPredicateState = TermRemapper(fieldMapping).apply(newState.predicateState)
-            val result = AsyncSMTProxySolver(ctx).use {
-                it.definitelyImplies(mappedNewPredicateState, state.predicateState)
+            val result = withTimeoutOrNull(200.milliseconds) {
+                AsyncSMTProxySolver(ctx).use {
+                    it.definitelyImplies(mappedNewPredicateState, state.predicateState)
+                }
             }
-            if (result) {
+            if (result != null && result) {
                 return null to null
             }
             val unionState = merge(state, newState, objMap, fieldMapping, mappedNewPredicateState)

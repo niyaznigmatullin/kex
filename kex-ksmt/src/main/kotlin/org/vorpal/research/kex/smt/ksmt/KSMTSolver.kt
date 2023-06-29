@@ -122,7 +122,7 @@ class KSMTSolver(private val executionContext: ExecutionContext) : AbstractSMTSo
         return definitelyImplies(from, to, freeTermsTo)
     }
 
-    suspend fun definitelyImplies(
+    private suspend fun definitelyImplies(
         firstState: PredicateState,
         secondBody: PredicateState,
         secondFreeTerms: Collection<Term>
@@ -145,7 +145,7 @@ class KSMTSolver(private val executionContext: ExecutionContext) : AbstractSMTSo
             solver.assertAsync(state.asAxiom() as KExpr<KBoolSort>)
             solver.assertAsync(ef.buildConstClassAxioms().asAxiom() as KExpr<KBoolSort>)
             log.debug("Running KSMT solver")
-            val result = solver.checkAsync(50.milliseconds)
+            val result = solver.checkAsync(timeout.seconds)
             log.debug("Solver finished")
             result == KSolverStatus.UNSAT
         }
