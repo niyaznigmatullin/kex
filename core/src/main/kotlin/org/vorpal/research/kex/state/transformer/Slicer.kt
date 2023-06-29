@@ -14,7 +14,6 @@ import org.vorpal.research.kex.trace.symbolic.PersistentSymbolicState
 import org.vorpal.research.kex.trace.symbolic.StateClause
 import org.vorpal.research.kex.trace.symbolic.SymbolicState
 import org.vorpal.research.kex.trace.symbolic.persistentSymbolicState
-import org.vorpal.research.kex.trace.symbolic.plus
 
 class CFGTracker : Transformer<CFGTracker> {
     private var currentDominators = setOf<Predicate>()
@@ -174,7 +173,7 @@ class Slicer(
 }
 
 
-class SymbolicStateSlicer(
+class SymbolicStateForwardSlicer(
     sliceTerms: Set<Term>,
     private val aa: AliasAnalysis
 ) {
@@ -195,8 +194,8 @@ class SymbolicStateSlicer(
     }
 
     private fun checkVars(lhv: Set<Term>, rhv: Set<Term>) = when {
-        lhv.filterNot { it.type is KexPointer }.any { sliceVars.contains(it) } -> {
-            rhv.forEach { addSliceTerm(it) }
+        rhv.filterNot { it.type is KexPointer }.any { sliceVars.contains(it) } -> {
+            lhv.forEach { addSliceTerm(it) }
             true
         }
 
@@ -204,18 +203,17 @@ class SymbolicStateSlicer(
     }
 
     private fun checkPtrs(predicate: Predicate, lhv: Set<Term>, rhv: Set<Term>): Boolean {
-        if (lhv.isEmpty()) return false
+        if (rhv.isEmpty()) return false
 
-        if (lhv.filter { it.type is KexPointer }.any { it in slicePtrs }) {
-            rhv.forEach { addSliceTerm(it) }
+        if (rhv.filter { it.type is KexPointer }.any { it in slicePtrs }) {
+            lhv.forEach { addSliceTerm(it) }
             return true
         }
 
         if (predicate.hasReceiver) {
-            val lhvPtrs = lhv.filter { it.type is KexPointer }
-            if (lhvPtrs.any { ref -> slicePtrs.any { slice -> aa.mayAlias(ref, slice) } }) {
+            val rhvPtrs = rhv.filter { it.type is KexPointer }
+            if (rhvPtrs.any { ref -> slicePtrs.any { slice -> aa.mayAlias(ref, slice) } }) {
                 lhv.forEach { addSliceTerm(it) }
-                rhv.forEach { addSliceTerm(it) }
                 return true
             }
         }
@@ -245,12 +243,9 @@ class SymbolicStateSlicer(
                 .filterTo(mutableSetOf(), isInterestingTerm)
 
             else -> {
-                val receiver = predicate.receiver
-                val lhvTerms = when {
-                    receiver != null -> TermCollector.getFullTermSet(receiver)
-                        .filterTo(mutableSetOf(), isInterestingTerm)
-
-                    else -> setOf()
+                val lhvTerms = when (val receiver = predicate.receiver) {
+                    null -> setOf()
+                    else -> TermCollector.getFullTermSet(receiver).filterTo(mutableSetOf(), isInterestingTerm)
                 }
                 val rhvTerms = predicate.operands.drop(1).flatMapTo(mutableSetOf()) { TermCollector.getFullTermSet(it) }
                 lhvTerms to rhvTerms

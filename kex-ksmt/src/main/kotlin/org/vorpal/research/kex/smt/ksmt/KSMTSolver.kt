@@ -8,6 +8,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.yield
 import org.ksmt.decl.KDecl
+import org.ksmt.decl.KConstDecl
 import org.ksmt.expr.KAndBinaryExpr
 import org.ksmt.expr.KAndNaryExpr
 import org.ksmt.expr.KExpr
@@ -28,36 +29,44 @@ import org.vorpal.research.kex.ExecutionContext
 import org.vorpal.research.kex.config.kexConfig
 import org.vorpal.research.kex.ktype.KexArray
 import org.vorpal.research.kex.ktype.KexInt
+import org.vorpal.research.kex.ktype.KexNull
 import org.vorpal.research.kex.ktype.KexReference
 import org.vorpal.research.kex.ktype.KexType
 import org.vorpal.research.kex.ktype.isArray
 import org.vorpal.research.kex.ktype.isString
 import org.vorpal.research.kex.ktype.kexType
+import org.vorpal.research.kex.smt.AbstractAsyncIncrementalSMTSolver
 import org.vorpal.research.kex.smt.AbstractAsyncSMTSolver
+import org.vorpal.research.kex.smt.AbstractIncrementalSMTSolver
 import org.vorpal.research.kex.smt.AbstractSMTSolver
+import org.vorpal.research.kex.smt.AsyncIncrementalSolver
 import org.vorpal.research.kex.smt.AsyncSolver
+import org.vorpal.research.kex.smt.IncrementalSolver
 import org.vorpal.research.kex.smt.MemoryShape
-import org.vorpal.research.kex.smt.Solver
 import org.vorpal.research.kex.smt.Result
 import org.vorpal.research.kex.smt.SMTModel
+import org.vorpal.research.kex.smt.Solver
 import org.vorpal.research.kex.smt.ksmt.KSMTEngine.asExpr
+import org.vorpal.research.kex.state.PredicateQuery
 import org.vorpal.research.kex.state.PredicateState
 import org.vorpal.research.kex.state.term.*
 import org.vorpal.research.kex.state.transformer.collectPointers
 import org.vorpal.research.kex.state.transformer.collectTerms
+import org.vorpal.research.kex.state.transformer.collectTypes
 import org.vorpal.research.kex.state.transformer.collectVariables
+import org.vorpal.research.kex.state.transformer.getConstStringMap
 import org.vorpal.research.kex.state.transformer.memspace
 import org.vorpal.research.kex.util.kapitalize
 import org.vorpal.research.kthelper.assert.ktassert
 import org.vorpal.research.kthelper.assert.unreachable
 import org.vorpal.research.kthelper.logging.debug
 import org.vorpal.research.kthelper.logging.log
+import org.vorpal.research.kthelper.`try`
 import org.vorpal.research.kthelper.tryOrNull
 import kotlin.math.log2
 import kotlin.reflect.KClass
 import kotlin.reflect.full.declaredMemberProperties
 import kotlin.reflect.jvm.isAccessible
-import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.ExperimentalTime
 
@@ -70,9 +79,13 @@ private val ksmtRunners = kexConfig.getIntValue("ksmt", "runners", 4)
 private val ksmtSolvers = kexConfig.getMultipleStringValue("ksmt", "solver")
 
 @Suppress("UNCHECKED_CAST")
-@Solver("ksmt")
 @AsyncSolver("ksmt")
-class KSMTSolver(private val executionContext: ExecutionContext) : AbstractSMTSolver, AbstractAsyncSMTSolver {
+@AsyncIncrementalSolver("ksmt")
+@Solver("ksmt")
+@IncrementalSolver("ksmt")
+class KSMTSolver(
+    private val executionContext: ExecutionContext
+) : AbstractSMTSolver, AbstractAsyncSMTSolver, AbstractIncrementalSMTSolver, AbstractAsyncIncrementalSMTSolver {
     companion object {
         private val portfolioSolverManager: KPortfolioSolverManager by lazy {
             KPortfolioSolverManager(
@@ -169,15 +182,18 @@ class KSMTSolver(private val executionContext: ExecutionContext) : AbstractSMTSo
         if (logQuery) {
             log.run {
                 debug("KSMT solver check")
-                debug("State: $state")
-                debug("Query: $query")
+                debug("State: {}", state)
+                debug("Query: {}", query)
             }
         }
 
-        val ctx = KSMTContext(ef)
+        val types = collectTypes(executionContext, state).filter { it !is KexNull }
+            .mapTo(mutableSetOf()) { it.getKfgType(executionContext.types) }
+        ef.initTypes(types)
+        ef.initStrings(getConstStringMap(state))
 
+        val ctx = KSMTContext(ef)
         val converter = KSMTConverter(executionContext)
-        converter.init(state, ef)
         val ksmtState = converter.convert(state, ef, ctx)
         val ksmtQuery = converter.convert(query, ef, ctx)
 
@@ -271,8 +287,8 @@ class KSMTSolver(private val executionContext: ExecutionContext) : AbstractSMTSo
     private suspend fun check(state: Bool_, query: Bool_): Pair<KSolverStatus, Any> = buildSolver().use { solver ->
         if (logFormulae) {
             log.run {
-                debug("State: $state")
-                debug("Query: $query")
+                debug("State: {}", state)
+                debug("Query: {}", query)
             }
         }
 
@@ -302,20 +318,22 @@ class KSMTSolver(private val executionContext: ExecutionContext) : AbstractSMTSo
         log.debug("Solver finished")
 
         return when (result) {
-            KSolverStatus.SAT -> {
+            KSolverStatus.SAT -> `try`<Pair<KSolverStatus, Any>> {
                 val model = solver.modelAsync()
                 if (logFormulae) log.debug(model)
                 result to model
+            }.getOrElse {
+                KSolverStatus.UNKNOWN to (it.message ?: "Exception during model acquisition")
             }
 
             KSolverStatus.UNSAT -> {
-                val core = solver.unsatCoreAsync()
-                log.debug("Unsat core: $core")
+                val core = tryOrNull { solver.unsatCoreAsync() } ?: "Solver executor is not alive"
+                log.debug("Unsat core: {}", core)
                 result to core
             }
 
             KSolverStatus.UNKNOWN -> {
-                val reason = tryOrNull { solver.reasonOfUnknown() } ?: "Solver executor is not alive"
+                val reason = tryOrNull { solver.reasonOfUnknownAsync() } ?: "Solver executor is not alive"
                 log.debug(reason)
                 result to reason
             }
@@ -333,7 +351,7 @@ class KSMTSolver(private val executionContext: ExecutionContext) : AbstractSMTSo
         model: KModel,
         name: String
     ): Pair<Term, Term> {
-        val ptrExpr = KSMTConverter(executionContext).convert(ptr, ef, this) as? Ptr_
+        val ptrExpr = KSMTConverter(executionContext, noAxioms = true).convert(ptr, ef, this) as? Ptr_
             ?: unreachable { log.error("Non-ptr expr for pointer $ptr") }
         val startProp = getBitvectorInitialProperty(memspace, name)
         val endProp = getBitvectorProperty(memspace, name)
@@ -354,7 +372,7 @@ class KSMTSolver(private val executionContext: ExecutionContext) : AbstractSMTSo
         model: KModel,
         name: String
     ): Pair<Term, Term> {
-        val ptrExpr = KSMTConverter(executionContext).convert(ptr, ef, this) as? Ptr_
+        val ptrExpr = KSMTConverter(executionContext, noAxioms = true).convert(ptr, ef, this) as? Ptr_
             ?: unreachable { log.error("Non-ptr expr for pointer $ptr") }
         val typeSize = KSMTExprFactory.getTypeSize(type)
         val startProp = when (typeSize) {
@@ -384,7 +402,7 @@ class KSMTSolver(private val executionContext: ExecutionContext) : AbstractSMTSo
         name: String
     ): Pair<Term, Term> {
         val kCtx = ctx.factory.ctx
-        val ptrExpr = KSMTConverter(executionContext).convert(ptr, ef, ctx) as? Ptr_
+        val ptrExpr = KSMTConverter(executionContext, noAxioms = true).convert(ptr, ef, ctx) as? Ptr_
             ?: unreachable { log.error("Non-ptr expr for pointer $ptr") }
         val modelPtr = KSMTUnlogic.undo(model.eval(ptrExpr.expr.asExpr(kCtx), true), kCtx, model)
 
@@ -405,7 +423,7 @@ class KSMTSolver(private val executionContext: ExecutionContext) : AbstractSMTSo
         name: String
     ): Pair<Term, Term> {
         val kCtx = ctx.factory.ctx
-        val ptrExpr = KSMTConverter(executionContext).convert(ptr, ef, ctx) as? Ptr_
+        val ptrExpr = KSMTConverter(executionContext, noAxioms = true).convert(ptr, ef, ctx) as? Ptr_
             ?: unreachable { log.error("Non-ptr expr for pointer $ptr") }
         val modelPtr = KSMTUnlogic.undo(model.eval(ptrExpr.expr.asExpr(kCtx), true), kCtx, model)
 
@@ -425,7 +443,7 @@ class KSMTSolver(private val executionContext: ExecutionContext) : AbstractSMTSo
         }
 
         val assignments = vars.associateWith {
-            val expr = KSMTConverter(executionContext).convert(it, ef, ctx)
+            val expr = KSMTConverter(executionContext, noAxioms = true).convert(it, ef, ctx)
             val ksmtExpr = expr.expr
 
             val evaluatedExpr = model.eval(ksmtExpr.asExpr(kCtx), true)
@@ -438,14 +456,13 @@ class KSMTSolver(private val executionContext: ExecutionContext) : AbstractSMTSo
         val typeMap = hashMapOf<Term, KexType>()
 
         for ((type, value) in ef.typeMap) {
-            val index =
-                when (val actualValue = KSMTUnlogic.undo(value.expr.asExpr(kCtx), kCtx, model)) {
-                    is ConstStringTerm -> term {
-                        const(actualValue.value.length - actualValue.value.indexOf('1') - 1)
-                    }
-
-                    else -> term { const(log2(actualValue.numericValue.toDouble()).toInt()) }
+            val index = when (val actualValue = KSMTUnlogic.undo(value.expr.asExpr(kCtx), kCtx, model)) {
+                is ConstStringTerm -> term {
+                    const(actualValue.value.length - actualValue.value.indexOf('1') - 1)
                 }
+
+                else -> term { const(log2(actualValue.numericValue.toDouble()).toInt()) }
+            }
             typeMap[index] = type.kexType
         }
 
@@ -456,10 +473,12 @@ class KSMTSolver(private val executionContext: ExecutionContext) : AbstractSMTSo
             when (ptr) {
                 is ArrayLoadTerm -> {}
                 is ArrayIndexTerm -> {
-                    val arrayPtrExpr = KSMTConverter(executionContext).convert(ptr.arrayRef, ef, ctx) as? Ptr_
-                        ?: unreachable { log.error("Non-ptr expr for pointer $ptr") }
-                    val indexExpr = KSMTConverter(executionContext).convert(ptr.index, ef, ctx) as? Int_
-                        ?: unreachable { log.error("Non integer expr for index in $ptr") }
+                    val arrayPtrExpr =
+                        KSMTConverter(executionContext, noAxioms = true).convert(ptr.arrayRef, ef, ctx) as? Ptr_
+                            ?: unreachable { log.error("Non-ptr expr for pointer $ptr") }
+                    val indexExpr =
+                        KSMTConverter(executionContext, noAxioms = true).convert(ptr.index, ef, ctx) as? Int_
+                            ?: unreachable { log.error("Non integer expr for index in $ptr") }
 
                     val modelPtr = KSMTUnlogic.undo(
                         model.eval(arrayPtrExpr.expr.asExpr(kCtx), true),
@@ -523,7 +542,7 @@ class KSMTSolver(private val executionContext: ExecutionContext) : AbstractSMTSo
                     val startMem = ctx.getWordInitialMemory(memspace)
                     val endMem = ctx.getWordMemory(memspace)
 
-                    val ptrExpr = KSMTConverter(executionContext).convert(ptr, ef, ctx) as? Ptr_
+                    val ptrExpr = KSMTConverter(executionContext, noAxioms = true).convert(ptr, ef, ctx) as? Ptr_
                         ?: unreachable { log.error("Non-ptr expr for pointer $ptr") }
 
                     val startV = startMem.load(ptrExpr)
@@ -591,9 +610,9 @@ class KSMTSolver(private val executionContext: ExecutionContext) : AbstractSMTSo
         for (ptr in indices) {
             ptr as ArrayIndexTerm
             val memspace = ptr.arrayRef.memspace
-            val arrayPtrExpr = KSMTConverter(executionContext).convert(ptr.arrayRef, ef, ctx) as? Ptr_
+            val arrayPtrExpr = KSMTConverter(executionContext, noAxioms = true).convert(ptr.arrayRef, ef, ctx) as? Ptr_
                 ?: unreachable { log.error("Non-ptr expr for pointer $ptr") }
-            val indexExpr = KSMTConverter(executionContext).convert(ptr.index, ef, ctx) as? Int_
+            val indexExpr = KSMTConverter(executionContext, noAxioms = true).convert(ptr.index, ef, ctx) as? Int_
                 ?: unreachable { log.error("Non integer expr for index in $ptr") }
 
             val modelPtr =
@@ -644,6 +663,177 @@ class KSMTSolver(private val executionContext: ExecutionContext) : AbstractSMTSo
             }.toMap(),
             typeMap
         )
+    }
+
+    override fun isSatisfiable(state: PredicateState, queries: List<PredicateQuery>): List<Result> = runBlocking {
+        isSatisfiableAsync(state, queries)
+    }
+
+    override suspend fun isSatisfiableAsync(state: PredicateState, queries: List<PredicateQuery>): List<Result> = try {
+        if (logQuery) {
+            log.run {
+                debug("KSMT solver check")
+                debug("State: {}", state)
+                debug("Queries: {}", queries.joinToString("\n"))
+            }
+        }
+
+        val allTypes = buildSet {
+            addAll(collectTypes(executionContext, state))
+            for (query in queries) {
+                addAll(collectTypes(executionContext, query.hardConstraints))
+                for (softConstraint in query.softConstraints) {
+                    addAll(collectTypes(executionContext, query.hardConstraints))
+                }
+            }
+        }.filter { it !is KexNull }.mapTo(mutableSetOf()) { it.getKfgType(executionContext.types) }
+        val allConstStrings = buildMap {
+            putAll(getConstStringMap(state))
+            for (query in queries) {
+                putAll(getConstStringMap(query.hardConstraints))
+            }
+        }
+        ef.initTypes(allTypes)
+        ef.initStrings(allConstStrings)
+
+        val ctx = KSMTContext(ef)
+        val converter = KSMTConverter(executionContext)
+        val ksmtState = converter.convert(state, ef, ctx)
+        val ksmtQueries = queries.map { (hard, soft) ->
+            converter.convert(hard, ef, ctx) to soft.map { converter.convert(it, ef, ctx) }
+        }
+
+        log.debug("Check started")
+        val results = checkIncremental(ksmtState, ksmtQueries)
+        log.debug("Check finished")
+        results.mapIndexed { index, (status, any) ->
+            when (status) {
+                KSolverStatus.UNSAT -> Result.UnsatResult
+                KSolverStatus.UNKNOWN -> Result.UnknownResult(any as String)
+                KSolverStatus.SAT -> Result.SatResult(
+                    collectModel(
+                        ctx,
+                        any as KModel,
+                        state + queries[index].hardConstraints
+                    )
+                )
+            }
+        }
+    } catch (e: KSolverException) {
+        when (e.cause) {
+            is TimeoutCancellationException ->
+                queries.map { Result.UnknownResult(e.message ?: "Exception in KSMT") }
+
+            is KSolverExecutorTimeoutException ->
+                queries.map { Result.UnknownResult(e.message ?: "Exception in KSMT") }
+
+            else -> {
+                log.warn("KSMT thrown an exception during check", e)
+                throw e
+            }
+        }
+    } catch (e: WorkerInitializationFailedException) {
+        if (e.cause !is TimeoutCancellationException) {
+            log.warn("KSMT thrown an exception during worker initialization", e)
+        }
+        queries.map { Result.UnknownResult(e.message ?: "Exception in KSMT") }
+    }
+
+    private suspend fun checkIncremental(
+        state: Bool_,
+        queries: List<Pair<Bool_, List<Bool_>>>
+    ): List<Pair<KSolverStatus, Any>> = buildSolver().use { solver ->
+        solver.assertAndTrackAsync(
+            state.asAxiom() as KExpr<KBoolSort>,
+            ef.ctx.mkConstDecl("State", ef.ctx.boolSort)
+        )
+        solver.assertAndTrackAsync(
+            ef.buildConstClassAxioms().asAxiom() as KExpr<KBoolSort>,
+            ef.ctx.mkConstDecl("ClassAxioms", ef.ctx.boolSort)
+        )
+        solver.push()
+
+        return queries.map { (hardConstraints, softConstraints) ->
+            solver.assertAndTrackAsync(
+                hardConstraints.asAxiom() as KExpr<KBoolSort>,
+                ef.ctx.mkConstDecl("HardConstraints", ef.ctx.boolSort)
+            )
+            val softConstraintsMap = when {
+                softConstraints.isNotEmpty() -> {
+                    solver.push()
+                    softConstraints.withIndex().associate { (index, softConstraint) ->
+                        val expr = ef.ctx.mkConstDecl("SoftConstraint$index", ef.ctx.boolSort)
+                        solver.assertAndTrack(softConstraint.asAxiom() as KExpr<KBoolSort>, expr)
+                        (expr as KConstDecl<KBoolSort>) to softConstraint.asAxiom() as KExpr<KBoolSort>
+                    }
+                }
+
+                else -> emptyMap()
+            }
+
+            log.debug("Running KSMT solver")
+            if (printSMTLib) {
+                log.debug("SMTLib formula:")
+                log.debug(solver)
+            }
+
+            when (val result = solver.checkAndMinimize(softConstraintsMap)) {
+                KSolverStatus.SAT -> `try`<Pair<KSolverStatus, Any>> {
+                    val model = solver.modelAsync()
+                    if (logFormulae) log.debug(model)
+                    result to model
+                }.getOrElse {
+                    KSolverStatus.UNKNOWN to (it.message ?: "Exception during model acquisition")
+                }
+
+                KSolverStatus.UNSAT -> {
+                    val core = tryOrNull { solver.unsatCoreAsync() } ?: "Solver executor is not alive"
+                    log.debug("Unsat core: {}", core)
+                    result to core
+                }
+
+                KSolverStatus.UNKNOWN -> {
+                    val reason = tryOrNull { solver.reasonOfUnknownAsync() } ?: "unknown"
+                    log.debug(reason)
+                    result to reason
+                }
+            }.also {
+                solver.pop()
+                if (softConstraints.isNotEmpty()) {
+                    solver.pop()
+                }
+                solver.push()
+            }
+        }
+    }
+
+    private suspend fun KPortfolioSolver.checkAndMinimize(
+        softConstraintsMap: Map<KConstDecl<KBoolSort>, KExpr<KBoolSort>>
+    ): KSolverStatus {
+        var result = this.check()
+        return when (result) {
+            KSolverStatus.UNSAT -> {
+                while (result == KSolverStatus.UNSAT && softConstraintsMap.isNotEmpty()) {
+                    val softCopies = softConstraintsMap.toMutableMap()
+                    val exprToDeclMappings = softConstraintsMap.keys
+                        .associateBy { it.asExpr(ef.ctx) as KExpr<KBoolSort> }
+                    val core = tryOrNull { this.unsatCoreAsync().toSet() } ?: return result
+                    if (core.any { exprToDeclMappings[it] !in softCopies }) break
+                    else {
+                        this.pop()
+                        this.push()
+                        for (key in core) softCopies.remove(exprToDeclMappings[key])
+                        for ((expr, softConstraint) in softCopies) {
+                            this.assertAndTrackAsync(softConstraint, expr)
+                        }
+                        result = this.checkAsync(timeout.seconds)
+                    }
+                }
+                result
+            }
+
+            else -> result
+        }
     }
 
     override fun close() {

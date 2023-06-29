@@ -19,9 +19,6 @@ public class CrashTrigger {
             sq = sq.shrink(param);
         } else if (move == Move.CONTAINED) {
             int[] array = new int[param.intValue()];
-            array[0] = 10;
-            array[1] = 9;
-            array[2] = -10;
             sq.contained(array);
         }
     }
@@ -61,8 +58,8 @@ public class CrashTrigger {
 
     public void triggerNegativeArray() {
         foo(
-                new UnsignedInteger(2),
-                new UnsignedInteger(2),
+                new UnsignedInteger(-2),
+                new UnsignedInteger(-2),
                 new UnsignedInteger(3),
                 new UnsignedInteger(3),
                 Move.CONTAINED,

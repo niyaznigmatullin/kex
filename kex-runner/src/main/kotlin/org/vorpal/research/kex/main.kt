@@ -38,7 +38,7 @@ fun main(args: Array<String>) {
     require(classPaths != null, cmd::printHelp)
 
     try {
-        val launcher: KexLauncher = when (val mode = cmd.getEnumValue("mode", LaunchMode.Concolic, ignoreCase = true)) {
+        val launcher = when (val mode = cmd.getEnumValue("mode", LaunchMode.Concolic, ignoreCase = true)) {
             LaunchMode.Crash -> {
                 val traceFile = cmd.getCmdValue("trace")
                 require(traceFile != null) {
@@ -54,6 +54,7 @@ fun main(args: Array<String>) {
 
                 CrashReproductionLauncher(classPaths, traceFile, traceDepth!!.toUInt())
             }
+
             else -> {
                 val targetName = cmd.getCmdValue("target")
                 require(targetName != null) {
@@ -71,6 +72,7 @@ fun main(args: Array<String>) {
 
                         LibraryCheckLauncher(classPaths, targetName, libraryTarget)
                     }
+
                     LaunchMode.Symbolic -> SymbolicLauncher(classPaths, targetName)
                     LaunchMode.Concolic -> ConcolicLauncher(classPaths, targetName)
                     LaunchMode.DefectChecker -> DefectCheckerLauncher(classPaths, targetName)

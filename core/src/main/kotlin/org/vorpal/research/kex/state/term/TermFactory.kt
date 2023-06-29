@@ -1,9 +1,41 @@
+@file:Suppress("MemberVisibilityCanBePrivate")
+
 package org.vorpal.research.kex.state.term
 
-import org.vorpal.research.kex.ktype.*
+import org.vorpal.research.kex.ktype.KexArray
+import org.vorpal.research.kex.ktype.KexBool
+import org.vorpal.research.kex.ktype.KexByte
+import org.vorpal.research.kex.ktype.KexChar
+import org.vorpal.research.kex.ktype.KexClass
+import org.vorpal.research.kex.ktype.KexDouble
+import org.vorpal.research.kex.ktype.KexFloat
+import org.vorpal.research.kex.ktype.KexInt
+import org.vorpal.research.kex.ktype.KexJavaClass
+import org.vorpal.research.kex.ktype.KexLong
+import org.vorpal.research.kex.ktype.KexPointer
+import org.vorpal.research.kex.ktype.KexReference
+import org.vorpal.research.kex.ktype.KexShort
+import org.vorpal.research.kex.ktype.KexString
+import org.vorpal.research.kex.ktype.KexType
+import org.vorpal.research.kex.ktype.kexType
+import org.vorpal.research.kex.ktype.mergeTypes
 import org.vorpal.research.kfg.ir.Class
 import org.vorpal.research.kfg.ir.Method
-import org.vorpal.research.kfg.ir.value.*
+import org.vorpal.research.kfg.ir.value.Argument
+import org.vorpal.research.kfg.ir.value.BoolConstant
+import org.vorpal.research.kfg.ir.value.ByteConstant
+import org.vorpal.research.kfg.ir.value.CharConstant
+import org.vorpal.research.kfg.ir.value.ClassConstant
+import org.vorpal.research.kfg.ir.value.Constant
+import org.vorpal.research.kfg.ir.value.DoubleConstant
+import org.vorpal.research.kfg.ir.value.FloatConstant
+import org.vorpal.research.kfg.ir.value.IntConstant
+import org.vorpal.research.kfg.ir.value.LongConstant
+import org.vorpal.research.kfg.ir.value.NullConstant
+import org.vorpal.research.kfg.ir.value.ShortConstant
+import org.vorpal.research.kfg.ir.value.StringConstant
+import org.vorpal.research.kfg.ir.value.ThisRef
+import org.vorpal.research.kfg.ir.value.Value
 import org.vorpal.research.kfg.ir.value.instruction.BinaryOpcode
 import org.vorpal.research.kfg.ir.value.instruction.CmpOpcode
 import org.vorpal.research.kfg.ir.value.instruction.UnaryOpcode
@@ -61,7 +93,7 @@ object TermFactory {
     fun getDouble(value: Double) = ConstDoubleTerm(value)
     fun getDouble(const: DoubleConstant) = getDouble(const.value)
     fun getString(type: KexType, value: String) = ConstStringTerm(type, value)
-    fun getString(value: String) = ConstStringTerm(KexClass("java/lang/String"), value)
+    fun getString(value: String) = ConstStringTerm(KexString(), value)
     fun getString(const: StringConstant) = getString(const.value)
     fun getNull() = NullTerm()
     fun getClass(klass: Class) = getClass(KexJavaClass(), klass.kexType)
@@ -199,6 +231,7 @@ object TermFactory {
     fun getClassAccess(type: KexType, operand: Term) = ClassAccessTerm(type, operand)
 }
 
+@Suppress("FunctionName")
 interface TermBuilder {
     val termFactory get() = TermFactory
 
@@ -235,7 +268,14 @@ interface TermBuilder {
     fun const(str: String) = termFactory.getString(str)
     fun const(char: Char) = termFactory.getChar(char)
     fun <T : Number> const(number: T) = termFactory.getConstant(number)
-    fun const(@Suppress("UNUSED_PARAMETER") nothing: Nothing?) = termFactory.getNull()
+
+    fun Char.asType(type: KexType): Term = when (type) {
+        is KexChar ->  termFactory.getChar(this)
+        is KexByte -> termFactory.getByte(this.code.toByte())
+        else -> unreachable { log.error("Unexpected cast from char to $type") }
+    }
+
+    fun const(nothing: Nothing?) = termFactory.getNull()
     fun `class`(klass: Class) = termFactory.getClass(klass)
     fun `class`(type: KexType, constantType: KexType) = termFactory.getClass(type, constantType)
     fun staticRef(type: Class) = termFactory.getStaticRef(type)
@@ -262,15 +302,25 @@ interface TermBuilder {
 
     infix fun Term.add(rhv: Term) = termFactory.getBinary(type, BinaryOpcode.ADD, this, rhv)
     operator fun Term.plus(rhv: Term) = this add rhv
+    operator fun Int.plus(rhv: Term) = const(this) add rhv
+    operator fun Double.plus(rhv: Term) = const(this) add rhv
 
     infix fun Term.sub(rhv: Term) = termFactory.getBinary(type, BinaryOpcode.SUB, this, rhv)
     operator fun Term.minus(rhv: Term) = this sub rhv
+    operator fun Int.minus(rhv: Term) = const(this) sub rhv
+    operator fun Double.minus(rhv: Term) = const(this) sub rhv
 
     infix fun Term.mul(rhv: Term) = termFactory.getBinary(type, BinaryOpcode.MUL, this, rhv)
     operator fun Term.times(rhv: Term) = this mul rhv
+    operator fun Int.times(rhv: Term) = const(this) mul rhv
+    operator fun Double.times(rhv: Term) = const(this) mul rhv
 
     operator fun Term.div(rhv: Term) = termFactory.getBinary(type, BinaryOpcode.DIV, this, rhv)
+    operator fun Int.div(rhv: Term) = const(this) / rhv
+    operator fun Double.div(rhv: Term) = const(this) / rhv
     operator fun Term.rem(rhv: Term) = termFactory.getBinary(type, BinaryOpcode.REM, this, rhv)
+    operator fun Int.rem(rhv: Term) = const(this) % rhv
+    operator fun Double.rem(rhv: Term) = const(this) % rhv
 
     infix fun Term.shl(shift: Term) = termFactory.getBinary(type, BinaryOpcode.SHL, this, shift)
     infix fun Term.shr(shift: Term) = termFactory.getBinary(type, BinaryOpcode.SHR, this, shift)
@@ -326,8 +376,8 @@ interface TermBuilder {
     infix fun Term.cmpg(rhv: Term) = termFactory.getCmp(CmpOpcode.CMPG, this, rhv)
     infix fun Term.cmpl(rhv: Term) = termFactory.getCmp(CmpOpcode.CMPL, this, rhv)
 
-    infix fun Term.`in`(container: Term) = when {
-        container.type is KexArray -> termFactory.getArrayContains(container, this)
+    infix fun Term.`in`(container: Term) = when (container.type) {
+        is KexArray -> termFactory.getArrayContains(container, this)
         else -> termFactory.getStringContains(container, this)
     }
 

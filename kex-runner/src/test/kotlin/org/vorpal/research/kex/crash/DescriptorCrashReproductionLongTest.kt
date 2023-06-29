@@ -4,6 +4,7 @@ import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.InternalSerializationApi
 import org.junit.Test
+import org.vorpal.research.kex.asm.analysis.crash.CrashReproductionChecker
 import org.vorpal.research.kex.test.crash.CrashTrigger
 import kotlin.time.ExperimentalTime
 
@@ -11,7 +12,10 @@ import kotlin.time.ExperimentalTime
 @ExperimentalSerializationApi
 @InternalSerializationApi
 @DelicateCoroutinesApi
-class BaseCrashReproductionLongTest : CrashReproductionTest("base-crash-reproduction") {
+class DescriptorCrashReproductionLongTest : CrashReproductionTest(
+    "descriptor-crash-reproduction",
+    CrashReproductionChecker::runWithDescriptorPreconditions
+) {
 
     @Test
     fun testNullPointerException() {

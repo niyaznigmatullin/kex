@@ -1,6 +1,9 @@
 package org.vorpal.research.kex.state.transformer
 
 import org.vorpal.research.kex.ktype.*
+import kotlinx.collections.immutable.toPersistentList
+import org.vorpal.research.kex.state.IncrementalPredicateState
+import org.vorpal.research.kex.state.PredicateQuery
 import org.vorpal.research.kex.state.predicate.EqualityPredicate
 import org.vorpal.research.kex.state.predicate.FieldStorePredicate
 import org.vorpal.research.kex.state.predicate.Predicate
@@ -11,7 +14,20 @@ import org.vorpal.research.kfg.type.TypeFactory
 import org.vorpal.research.kthelper.assert.unreachable
 import org.vorpal.research.kthelper.logging.log
 
-class BoolTypeAdapter(val types: TypeFactory) : Transformer<BoolTypeAdapter> {
+class BoolTypeAdapter(val types: TypeFactory) : Transformer<BoolTypeAdapter>, IncrementalTransformer {
+
+    override fun apply(state: IncrementalPredicateState): IncrementalPredicateState {
+        return IncrementalPredicateState(
+            apply(state.state),
+            state.queries.map { query ->
+                PredicateQuery(
+                    apply(query.hardConstraints),
+                    query.softConstraints.map { transform(it) }.toPersistentList()
+                )
+            }
+        )
+    }
+
     override fun transformEqualityPredicate(predicate: EqualityPredicate): Predicate {
         val lhv = predicate.lhv
         val rhv = predicate.rhv
