@@ -18,7 +18,7 @@ public class PrimitiveConcolicTests {
             AssertIntrinsics.kexAssert(true);
         } else if (d == 0.0) {
             AssertIntrinsics.kexAssert(true);
-        } else {
+        } else if (d < 0.0) {
             AssertIntrinsics.kexAssert(true);
         }
     }

@@ -74,7 +74,8 @@ class InstructionSymbolicCheckerGraph(
             rootMethod,
             rootMethod.klassName + testPostfix + testIndex.getAndIncrement() + "graph",
             graphBuilder
-        );
+        )
+        log.debug("Generating test: ${generatorGraph.testName}")
         val generator = UnsafeGenerator(
             ctx,
             rootMethod,

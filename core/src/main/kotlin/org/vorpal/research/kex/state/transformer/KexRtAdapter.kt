@@ -1,13 +1,26 @@
 package org.vorpal.research.kex.state.transformer
 
+import kotlinx.collections.immutable.toPersistentList
 import org.vorpal.research.kex.ktype.KexClass
 import org.vorpal.research.kex.ktype.KexReference
 import org.vorpal.research.kex.ktype.KexRtManager.isKexRt
 import org.vorpal.research.kex.ktype.KexRtManager.rtMapped
 import org.vorpal.research.kex.ktype.KexRtManager.rtUnmapped
+import org.vorpal.research.kex.state.IncrementalPredicateState
+import org.vorpal.research.kex.state.PredicateQuery
 import org.vorpal.research.kex.state.predicate.PredicateBuilder
 import org.vorpal.research.kex.state.predicate.PredicateType
-import org.vorpal.research.kex.state.term.*
+import org.vorpal.research.kex.state.term.ArgumentTerm
+import org.vorpal.research.kex.state.term.ArrayIndexTerm
+import org.vorpal.research.kex.state.term.CallTerm
+import org.vorpal.research.kex.state.term.CastTerm
+import org.vorpal.research.kex.state.term.ConstClassTerm
+import org.vorpal.research.kex.state.term.FieldTerm
+import org.vorpal.research.kex.state.term.InstanceOfTerm
+import org.vorpal.research.kex.state.term.StaticClassRefTerm
+import org.vorpal.research.kex.state.term.Term
+import org.vorpal.research.kex.state.term.UndefTerm
+import org.vorpal.research.kex.state.term.ValueTerm
 import org.vorpal.research.kfg.ClassManager
 import org.vorpal.research.kfg.ir.Field
 import org.vorpal.research.kfg.ir.Location
@@ -21,9 +34,21 @@ fun FieldTerm.unmappedKfgField(cm: ClassManager): Field {
     }
 }
 
-class KexRtAdapter(val cm: ClassManager) : PredicateBuilder, Transformer<KexRtAdapter> {
+class KexRtAdapter(val cm: ClassManager) : PredicateBuilder, Transformer<KexRtAdapter>,  IncrementalTransformer {
     override val type = PredicateType.State()
     override val location = Location()
+
+    override fun apply(state: IncrementalPredicateState): IncrementalPredicateState {
+        return IncrementalPredicateState(
+            apply(state.state),
+            state.queries.map { query ->
+                PredicateQuery(
+                    apply(query.hardConstraints),
+                    query.softConstraints.map { transform(it) }.toPersistentList()
+                )
+            }
+        )
+    }
 
     override fun transformArgumentTerm(term: ArgumentTerm): Term {
         return arg(term.type.rtMapped, term.index)

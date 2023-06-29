@@ -12,17 +12,17 @@ import org.vorpal.research.kex.trace.symbolic.StateClause
 import org.vorpal.research.kex.trace.symbolic.persistentClauseStateOf
 import org.vorpal.research.kex.trace.symbolic.persistentPathConditionOf
 import org.vorpal.research.kex.trace.symbolic.persistentSymbolicState
-import org.vorpal.research.kex.util.illegalArgumentClass
-import org.vorpal.research.kex.util.numberFormatClass
-import org.vorpal.research.kex.util.stringIndexOOB
+import org.vorpal.research.kfg.charSequence
 import org.vorpal.research.kfg.charWrapper
+import org.vorpal.research.kfg.illegalArgumentClass
 import org.vorpal.research.kfg.intWrapper
 import org.vorpal.research.kfg.ir.Class
 import org.vorpal.research.kfg.ir.Method
 import org.vorpal.research.kfg.ir.value.instruction.CallInst
 import org.vorpal.research.kfg.ir.value.instruction.Instruction
+import org.vorpal.research.kfg.numberFormatClass
 import org.vorpal.research.kfg.stringClass
-import org.vorpal.research.kfg.type.SystemTypeNames
+import org.vorpal.research.kfg.stringIndexOOB
 
 
 class ExceptionPreconditionManager(
@@ -34,11 +34,46 @@ class ExceptionPreconditionManager(
 
 
     init {
-        val charSequenceClass = cm[SystemTypeNames.charSequence]
+        val charSequenceClass = cm.charSequence
         val integerClass = cm.intWrapper
         val stringClass = cm.stringClass
 
         conditions.getOrPut(charSequenceClass.getMethod("charAt", tf.charType, tf.intType)) {
+            val contracts = mutableMapOf<Class, ExceptionPreconditionBuilder>()
+            contracts[cm.stringIndexOOB] = object : ExceptionPreconditionBuilder {
+                override val targetException get() = cm.stringIndexOOB
+
+                override fun build(location: Instruction, state: TraverserState): Set<PersistentSymbolicState> {
+                    location as CallInst
+                    val lengthMethod = charSequenceClass.getMethod("length", tf.intType)
+                    val lengthTerm = generate(KexInt)
+                    return setOf(
+                        persistentSymbolicState(
+                            path = persistentPathConditionOf(
+                                PathClause(PathClauseType.BOUNDS_CHECK, location, path {
+                                    (state.mkTerm(location.args[0]) ge 0) equality false
+                                })
+                            )
+                        ),
+                        persistentSymbolicState(
+                            state = persistentClauseStateOf(
+                                StateClause(location, org.vorpal.research.kex.state.predicate.state {
+                                    lengthTerm.call(state.mkTerm(location.callee).call(lengthMethod))
+                                })
+                            ),
+                            path = persistentPathConditionOf(
+                                PathClause(PathClauseType.BOUNDS_CHECK, location, path {
+                                    (state.mkTerm(location.args[0]) lt lengthTerm) equality false
+                                })
+                            )
+                        )
+                    )
+                }
+            }
+            contracts
+        }
+
+        conditions.getOrPut(stringClass.getMethod("charAt", tf.charType, tf.intType)) {
             val contracts = mutableMapOf<Class, ExceptionPreconditionBuilder>()
             contracts[cm.stringIndexOOB] = object : ExceptionPreconditionBuilder {
                 override val targetException get() = cm.stringIndexOOB

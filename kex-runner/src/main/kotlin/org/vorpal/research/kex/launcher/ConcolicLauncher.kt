@@ -7,11 +7,13 @@ import org.vorpal.research.kex.ExecutionContext
 import org.vorpal.research.kex.asm.analysis.concolic.InstructionConcolicChecker
 import org.vorpal.research.kex.asm.transform.SymbolicTraceInstrumenter
 import org.vorpal.research.kex.asm.transform.SystemExitTransformer
+import org.vorpal.research.kex.asm.util.ClassWriter
 import org.vorpal.research.kex.config.kexConfig
 import org.vorpal.research.kex.jacoco.CoverageReporter
 import org.vorpal.research.kex.trace.runner.ExecutorMasterController
 import org.vorpal.research.kex.util.PermanentCoverageInfo
 import org.vorpal.research.kfg.Package
+import org.vorpal.research.kex.util.instrumentedCodeDirectory
 import org.vorpal.research.kfg.ir.Method
 import org.vorpal.research.kfg.visitor.Pipeline
 import org.vorpal.research.kfg.visitor.executePipeline
@@ -25,6 +27,7 @@ import kotlin.time.ExperimentalTime
 class ConcolicLauncher(classPaths: List<String>, targetName: String) : KexAnalysisLauncher(classPaths, targetName) {
     override fun prepareClassPath(ctx: ExecutionContext): Pipeline.() -> Unit = {
         +SymbolicTraceInstrumenter(ctx)
+        +ClassWriter(ctx, kexConfig.instrumentedCodeDirectory)
     }
 
     private val batchedTargets: Set<Set<Method>>
@@ -46,13 +49,15 @@ class ConcolicLauncher(classPaths: List<String>, targetName: String) : KexAnalys
                 InstructionConcolicChecker.run(context, setOfTargets)
             }
 
-            val coverageInfo = CoverageReporter(containers).execute(context.cm, analysisLevel)
-            log.info(
-                coverageInfo.print(kexConfig.getBooleanValue("kex", "printDetailedCoverage", false))
-            )
+            if (kexConfig.getBooleanValue("kex", "computeCoverage", true)) {
+                val coverageInfo = CoverageReporter(containers).execute(context.cm, analysisLevel)
+                log.info(
+                    coverageInfo.print(kexConfig.getBooleanValue("kex", "printDetailedCoverage", false))
+                )
 
-            PermanentCoverageInfo.putNewInfo("concolic", analysisLevel.toString(), coverageInfo)
-            PermanentCoverageInfo.emit()
+                PermanentCoverageInfo.putNewInfo("concolic", analysisLevel.toString(), coverageInfo)
+                PermanentCoverageInfo.emit()
+            }
         }
     }
 }

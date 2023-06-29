@@ -7,6 +7,7 @@ import org.vorpal.research.kfg.ir.Location
 import org.vorpal.research.kfg.ir.Method
 import org.vorpal.research.kfg.ir.value.instruction.Instruction
 import org.vorpal.research.kfg.ir.value.instruction.ReturnInst
+import org.vorpal.research.kfg.ir.value.instruction.ThrowInst
 import org.vorpal.research.kthelper.collection.MapWithDefault
 import org.vorpal.research.kthelper.collection.queueOf
 import org.vorpal.research.kthelper.collection.withDefault
@@ -15,14 +16,17 @@ import org.vorpal.research.kthelper.graph.Viewable
 
 
 class MethodDistanceCounter(
+    private val rootMethod: Method,
+    private val targetInstructions: Set<Instruction>,
     private val stackTrace: StackTrace
 ) {
     private val scores = mutableMapOf<Method, MapWithDefault<BasicBlock, ULong>>()
 
     companion object {
-        const val INF = 1_000_000UL
-        private const val DEFAULT_WEIGHT = 10UL
-        private const val CATCH_WEIGHT = 1000UL
+        const val INF = 100_000_000_000UL
+        const val DEFAULT_WEIGHT = 10UL
+        const val CATCH_WEIGHT = 1000UL
+        const val CALL_WEIGHT = 5000UL
     }
 
     private infix fun Pair<Method, Location>.eq(stackTraceElement: StackTraceElement): Boolean {
@@ -34,16 +38,21 @@ class MethodDistanceCounter(
     }
 
     private fun Method.targetInstructions(): Set<Instruction> {
-        return this.body.flatten().filterTo(mutableSetOf()) { inst ->
-            stackTrace.stackTraceLines.any { (this to inst.location) eq it }
+        return when (this) {
+            rootMethod -> targetInstructions
+            else -> this.body.flatten().filterTo(mutableSetOf()) { inst ->
+                stackTrace.stackTraceLines.any { (this to inst.location) eq it }
+            }
         }
     }
 
 
     private fun computeMethodScores(method: Method): MapWithDefault<BasicBlock, ULong> {
         val targetInstructions = method.targetInstructions().ifEmpty {
-            method.body.flatten()
-                .filterIsInstanceTo<ReturnInst, MutableSet<ReturnInst>>(mutableSetOf())
+            val instructions = method.body.flatten()
+            instructions.filterIsInstanceTo<ReturnInst, MutableSet<ReturnInst>>(mutableSetOf()) +
+                    instructions.filterIsInstanceTo<ThrowInst, MutableSet<ThrowInst>>(mutableSetOf())
+                        .filter { it.parent.successors.isEmpty() && it.parent.handlers.isEmpty() }
         }.mapTo(mutableSetOf()) { it.parent }
 
         val weights = targetInstructions.associateWith { 0UL }.toMutableMap().withDefault(INF)

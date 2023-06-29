@@ -77,9 +77,9 @@ class TestClass {
 }
 ```
 
-Compile that class into the jar file and tun Kex on it using following command:
+Compile that class into the jar file and run Kex on it using following command:
 ```bash
-./kex.sh --classpath test.jar --target TestClass --output test --mode concolic
+python ./kex.py --classpath test.jar --target TestClass --output test --mode concolic
 ```
 
 Kex will produce directory `test` with all the results and logs. `test/tests`

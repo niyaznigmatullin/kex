@@ -21,7 +21,6 @@ import org.vorpal.research.kex.trace.symbolic.PathClauseType
 import org.vorpal.research.kex.trace.symbolic.PersistentPathCondition
 import org.vorpal.research.kex.trace.symbolic.PersistentSymbolicState
 import org.vorpal.research.kex.trace.symbolic.persistentSymbolicState
-import org.vorpal.research.kex.trace.symbolic.plus
 import org.vorpal.research.kex.trace.symbolic.protocol.ExecutionCompletedResult
 import org.vorpal.research.kex.trace.symbolic.toPersistentState
 import org.vorpal.research.kex.util.nextOrNull
@@ -117,6 +116,8 @@ class ContextGuidedSelector(
     override suspend fun addExecutionTrace(method: Method, result: ExecutionCompletedResult) {
         executionTree.addTrace(result.trace.toPersistentState())
     }
+
+    override fun reverse(pathClause: PathClause): PathClause? = pathClause.reversed()
 
     private fun PathClause.reversed(): PathClause? = when (type) {
         PathClauseType.NULL_CHECK -> copy(predicate = predicate.reverseBoolCond())

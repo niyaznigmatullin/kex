@@ -10,34 +10,32 @@ import org.vorpal.research.kex.asm.analysis.crash.precondition.ConstraintExcepti
 import org.vorpal.research.kex.asm.analysis.crash.precondition.DescriptorExceptionPreconditionBuilder
 import org.vorpal.research.kex.asm.analysis.crash.precondition.ExceptionPreconditionBuilder
 import org.vorpal.research.kex.asm.analysis.crash.precondition.ExceptionPreconditionBuilderImpl
+import org.vorpal.research.kex.asm.analysis.symbolic.ConditionCheckQuery
 import org.vorpal.research.kex.asm.analysis.symbolic.DefaultCallResolver
+import org.vorpal.research.kex.asm.analysis.symbolic.EmptyQuery
 import org.vorpal.research.kex.asm.analysis.symbolic.SymbolicCallResolver
 import org.vorpal.research.kex.asm.analysis.symbolic.SymbolicInvokeDynamicResolver
 import org.vorpal.research.kex.asm.analysis.symbolic.SymbolicPathSelector
 import org.vorpal.research.kex.asm.analysis.symbolic.SymbolicTraverser
-import org.vorpal.research.kex.asm.analysis.symbolic.TraverserState
-import org.vorpal.research.kex.asm.analysis.util.checkAsyncAndSlice
+import org.vorpal.research.kex.asm.analysis.symbolic.UpdateAction
+import org.vorpal.research.kex.asm.analysis.symbolic.UpdateAndReportQuery
+import org.vorpal.research.kex.asm.analysis.util.checkAsyncIncrementalAndSlice
 import org.vorpal.research.kex.compile.CompilationException
 import org.vorpal.research.kex.config.kexConfig
 import org.vorpal.research.kex.descriptor.Descriptor
-import org.vorpal.research.kex.ktype.KexType
 import org.vorpal.research.kex.parameters.Parameters
 import org.vorpal.research.kex.reanimator.UnsafeGenerator
+import org.vorpal.research.kex.reanimator.codegen.javagen.ReflectionUtilsPrinter
 import org.vorpal.research.kex.reanimator.codegen.klassName
-import org.vorpal.research.kex.state.predicate.path
-import org.vorpal.research.kex.state.term.Term
-import org.vorpal.research.kex.trace.symbolic.PathClause
-import org.vorpal.research.kex.trace.symbolic.PathClauseType
+import org.vorpal.research.kex.state.predicate.state
+import org.vorpal.research.kex.trace.symbolic.StateClause
 import org.vorpal.research.kex.trace.symbolic.SymbolicState
-import org.vorpal.research.kex.util.arrayIndexOOBClass
 import org.vorpal.research.kex.util.asmString
-import org.vorpal.research.kex.util.classCastClass
-import org.vorpal.research.kex.util.negativeArrayClass
 import org.vorpal.research.kex.util.newFixedThreadPoolContextWithMDC
-import org.vorpal.research.kex.util.nullptrClass
-import org.vorpal.research.kex.util.runtimeException
 import org.vorpal.research.kex.util.testcaseDirectory
 import org.vorpal.research.kfg.ClassManager
+import org.vorpal.research.kfg.arrayIndexOOBClass
+import org.vorpal.research.kfg.classCastClass
 import org.vorpal.research.kfg.ir.Class
 import org.vorpal.research.kfg.ir.Method
 import org.vorpal.research.kfg.ir.value.ThisRef
@@ -49,7 +47,11 @@ import org.vorpal.research.kfg.ir.value.instruction.FieldLoadInst
 import org.vorpal.research.kfg.ir.value.instruction.FieldStoreInst
 import org.vorpal.research.kfg.ir.value.instruction.Instruction
 import org.vorpal.research.kfg.ir.value.instruction.NewArrayInst
+import org.vorpal.research.kfg.ir.value.instruction.NewInst
 import org.vorpal.research.kfg.ir.value.instruction.ThrowInst
+import org.vorpal.research.kfg.negativeArrayClass
+import org.vorpal.research.kfg.nullptrClass
+import org.vorpal.research.kfg.runtimeException
 import org.vorpal.research.kthelper.assert.ktassert
 import org.vorpal.research.kthelper.logging.log
 import kotlin.io.path.ExperimentalPathApi
@@ -80,13 +82,22 @@ private val Instruction.isNullptrThrowing
         else -> false
     }
 
+private fun Instruction.dominates(other: Instruction): Boolean {
+    var current = this.parent
+    while (current != other.parent) {
+        if (current.successors.size != 1) return false
+        current = current.successors.single()
+    }
+    return true
+}
+
 
 private fun StackTrace.targetException(context: ExecutionContext): Class =
     context.cm[firstLine.takeWhile { it != ':' }.asmString]
 
 private fun StackTrace.targetInstructions(context: ExecutionContext): Set<Instruction> {
     val targetException = targetException(context)
-    return context.cm[stackTraceLines.first()].body.flatten()
+    val candidates = context.cm[stackTraceLines.first()].body.flatten()
         .filter { it.location.line == stackTraceLines.first().lineNumber }
         .filterTo(mutableSetOf()) {
             when (targetException) {
@@ -95,7 +106,7 @@ private fun StackTrace.targetInstructions(context: ExecutionContext): Set<Instru
                 context.cm.negativeArrayClass -> it is NewArrayInst
                 context.cm.classCastClass -> it is CastInst
                 else -> when (it) {
-                    is ThrowInst -> it.throwable.type == targetException.asType
+                    is ThrowInst -> targetException.asType.isSubtypeOf(it.throwable.type)
                     is CallInst -> targetException.isInheritorOf(context.cm.runtimeException)
                             || targetException in it.method.exceptions
 
@@ -103,6 +114,20 @@ private fun StackTrace.targetInstructions(context: ExecutionContext): Set<Instru
                 }
             }
         }
+
+    val candidateNewInsts = candidates.filterIsInstance<ThrowInst>().mapNotNullTo(mutableSetOf()) {
+        (it.throwable as? NewInst)?.let { throwable ->
+            when {
+                throwable.type == targetException.asType && throwable.dominates(it) -> throwable
+                else -> null
+            }
+        }
+    }
+
+    return when {
+        candidateNewInsts.isNotEmpty() -> candidateNewInsts
+        else -> candidates
+    }
 }
 
 class CrashReproductionChecker(
@@ -124,7 +149,7 @@ class CrashReproductionChecker(
     private val generatedTestClasses = mutableSetOf<String>()
     private val descriptors = mutableMapOf<String, Parameters<Descriptor>>()
     private val preconditions = mutableMapOf<String, ConstraintExceptionPrecondition>()
-    private var lastPrecondition: ConstraintExceptionPrecondition? = null
+    private var lastPrecondition = mutableMapOf<Parameters<Descriptor>, ConstraintExceptionPrecondition>()
 
     init {
         ktassert(
@@ -179,19 +204,24 @@ class CrashReproductionChecker(
             preconditionBuilder: ExceptionPreconditionBuilder,
             reproductionChecker: ExceptionReproductionChecker,
             shouldStopAfterFirst: Boolean
-        ): TimedValue<CrashReproductionResult>? = withTimeoutOrNull(timeLimit) {
-            measureTimedValue {
-                runChecker(
-                    context,
-                    stackTrace,
-                    targetInstructions,
-                    preconditionBuilder,
-                    reproductionChecker,
-                    shouldStopAfterFirst
-                )
+        ): TimedValue<CrashReproductionResult> = measureTimedValue {
+            val checker = CrashReproductionChecker(
+                context,
+                stackTrace,
+                targetInstructions,
+                preconditionBuilder,
+                reproductionChecker,
+                shouldStopAfterFirst
+            )
+            withTimeoutOrNull(timeLimit) {
+                checker.analyze()
             }
+            CrashReproductionResult(
+                checker.generatedTestClasses,
+                checker.descriptors,
+                checker.preconditions
+            )
         }
-
 
         @ExperimentalTime
         @DelicateCoroutinesApi
@@ -247,7 +277,8 @@ class CrashReproductionChecker(
             preconditionBuilder: (CrashReproductionResult) -> ExceptionPreconditionBuilder
         ): Set<String> {
             val globalTimeLimit = kexConfig.getIntValue("crash", "globalTimeLimit", 100).seconds
-            val localTimeLimit = kexConfig.getIntValue("crash", "localTimeLimit")?.seconds ?: (globalTimeLimit / 10)
+            val localTimeLimit = kexConfig.getIntValue("crash", "localTimeLimit")?.seconds
+                ?: (globalTimeLimit / stackTrace.size)
             val stopAfterFirstCrash = kexConfig.getBooleanValue("crash", "stopAfterFirstCrash", false)
 
             val coroutineContext = newFixedThreadPoolContextWithMDC(1, "crash-dispatcher")
@@ -265,12 +296,13 @@ class CrashReproductionChecker(
                             StackTrace(stackTrace.firstLine, listOf(firstLine))
                         ),
                         stopAfterFirstCrash
-                    ) ?: return@withTimeoutOrNull CrashReproductionResult.empty()
+                    )
 
                     for ((line, prev) in stackTrace.stackTraceLines.drop(1)
                         .zip(stackTrace.stackTraceLines.dropLast(1))) {
                         if (result.testClasses.isEmpty()) break
                         kexConfig.testcaseDirectory.deleteRecursively()
+                        ReflectionUtilsPrinter.invalidateAll()
 
                         val targetInstructions = context.cm[line].body.flatten()
                             .filter { it.location.line == line.lineNumber }
@@ -287,7 +319,7 @@ class CrashReproductionChecker(
                                 StackTrace(stackTrace.firstLine, listOf(line)),
                             ),
                             stopAfterFirstCrash
-                        ) ?: return@withTimeoutOrNull CrashReproductionResult.empty()
+                        )
 
                         val reproductionChecker = ExceptionReproductionCheckerImpl(
                             context,
@@ -298,8 +330,8 @@ class CrashReproductionChecker(
                         }
                         result = currentResult.copy(
                             testClasses = filteredTestCases,
-                            descriptors = result.descriptors.filterKeys { it in filteredTestCases },
-                            preconditions = result.preconditions.filterKeys { it in filteredTestCases }
+                            descriptors = currentResult.descriptors.filterKeys { it in filteredTestCases },
+                            preconditions = currentResult.preconditions.filterKeys { it in filteredTestCases }
                         )
                     }
                     result
@@ -311,6 +343,7 @@ class CrashReproductionChecker(
                 }
                 if (resultingTestClasses.isEmpty()) {
                     kexConfig.testcaseDirectory.deleteRecursively()
+                    ReflectionUtilsPrinter.invalidateAll()
                 }
                 resultingTestClasses
             }
@@ -323,118 +356,84 @@ class CrashReproductionChecker(
         }
 
         if (inst in targetInstructions) {
-            val state = currentState ?: return
-            for (preCondition in preconditionBuilder.build(inst, state)) {
-                val triggerState = state.copy(
-                    symbolicState = state.symbolicState + preCondition
+            val traverserState = currentState ?: return
+            checkReachabilityIncremental(
+                traverserState,
+                ConditionCheckQuery(
+                    preconditionBuilder.build(inst, traverserState).map { precondition ->
+                        UpdateAndReportQuery(
+                            precondition,
+                            { state -> state },
+                            { state, parameters ->
+                                throwExceptionAndReport(
+                                    state,
+                                    parameters,
+                                    inst,
+                                    generate(preconditionBuilder.targetException.symbolicClass)
+                                )
+                            }
+                        )
+                    }
                 )
-                checkExceptionAndReport(triggerState, inst, generate(preconditionBuilder.targetException.symbolicClass))
-            }
+            )
         }
 
         super.traverseInstruction(inst)
     }
 
-    override suspend fun nullabilityCheck(
-        state: TraverserState,
-        inst: Instruction,
-        term: Term
-    ): TraverserState? {
-        val persistentState = state.symbolicState
-        val nullityClause = PathClause(
-            PathClauseType.NULL_CHECK,
-            inst,
-            path { (term eq null) equality false }
-        )
-        return checkReachability(
-            state.copy(
-                symbolicState = persistentState.copy(
-                    path = persistentState.path.add(nullityClause)
-                ),
-                nullCheckedTerms = state.nullCheckedTerms.add(term)
-            ), inst
-        )
-    }
 
-    override suspend fun boundsCheck(
-        state: TraverserState,
-        inst: Instruction,
-        index: Term,
-        length: Term
-    ): TraverserState? {
-        val persistentState = state.symbolicState
-        val zeroClause = PathClause(
-            PathClauseType.BOUNDS_CHECK,
-            inst,
-            path { (index ge 0) equality true }
-        )
-        val lengthClause = PathClause(
-            PathClauseType.BOUNDS_CHECK,
-            inst,
-            path { (index lt length) equality true }
-        )
-        return checkReachability(
-            state.copy(
-                symbolicState = persistentState.copy(
-                    path = persistentState.path.add(
-                        zeroClause.copy(predicate = zeroClause.predicate)
-                    ).add(
-                        lengthClause.copy(predicate = lengthClause.predicate)
+    override suspend fun traverseCallInst(inst: CallInst) = acquireState { traverserState ->
+        val callee = when {
+            inst.isStatic -> staticRef(inst.method.klass)
+            else -> traverserState.mkTerm(inst.callee)
+        }
+        val argumentTerms = inst.args.map { traverserState.mkTerm(it) }
+        val candidates = callResolver.resolve(traverserState, inst)
+
+        val handler: (UpdateAction) = { state ->
+            for (candidate in candidates) {
+                processMethodCall(state, inst, candidate, callee, argumentTerms)
+            }
+
+            var varState = state
+            val receiver = when {
+                inst.isNameDefined -> {
+                    val res = generate(inst.type.symbolicType)
+                    varState = varState.copy(
+                        valueMap = traverserState.valueMap.put(inst, res)
                     )
-                ),
-                boundCheckedTerms = state.boundCheckedTerms.add(index to length)
-            ), inst
-        )
+                    res
+                }
+
+                else -> null
+            }
+            val callClause = StateClause(
+                inst, state {
+                    val callTerm = callee.call(inst.method, argumentTerms)
+                    receiver?.call(callTerm) ?: call(callTerm)
+                }
+            )
+            (varState + callClause).also {
+                currentState = it
+            }
+        }
+
+        val nullQuery = when {
+            inst.isStatic -> EmptyQuery()
+            else -> nullabilityCheckInc(traverserState, inst, callee)
+        }.withHandler(handler)
+
+        checkReachabilityIncremental(traverserState, nullQuery)
     }
 
-    override suspend fun newArrayBoundsCheck(
-        state: TraverserState,
-        inst: Instruction,
-        index: Term
-    ): TraverserState? {
-        val persistentState = state.symbolicState
-        val zeroClause = PathClause(
-            PathClauseType.BOUNDS_CHECK,
-            inst,
-            path { (index ge 0) equality true }
-        )
-        return checkReachability(
-            state.copy(
-                symbolicState = persistentState.copy(
-                    path = persistentState.path.add(zeroClause)
-                ),
-                boundCheckedTerms = state.boundCheckedTerms.add(index to index)
-            ), inst
-        )
-    }
-
-    override suspend fun typeCheck(
-        state: TraverserState,
-        inst: Instruction,
-        term: Term,
-        type: KexType
-    ): TraverserState? {
-        val currentlyCheckedType = type.getKfgType(ctx.types)
-        val persistentState = state.symbolicState
-        val typeClause = PathClause(
-            PathClauseType.TYPE_CHECK,
-            inst,
-            path { (term `is` type) equality true }
-        )
-        return checkReachability(
-            state.copy(
-                symbolicState = persistentState.copy(
-                    path = persistentState.path.add(typeClause)
-                ),
-                typeCheckedTerms = state.typeCheckedTerms.put(term, currentlyCheckedType)
-            ), inst
-        )
-    }
-
-    override suspend fun check(method: Method, state: SymbolicState): Parameters<Descriptor>? {
-        val (params, precondition) = method.checkAsyncAndSlice(ctx, state) ?: return null
-        lastPrecondition = precondition
-        return params
+    override suspend fun checkIncremental(
+        method: Method,
+        state: SymbolicState,
+        queries: List<SymbolicState>
+    ): List<Parameters<Descriptor>?> {
+        val result = method.checkAsyncIncrementalAndSlice(ctx, state, queries)
+        lastPrecondition.putAll(result.filterNotNull().toMap())
+        return result.map { it?.first }
     }
 
     override fun report(inst: Instruction, parameters: Parameters<Descriptor>, testPostfix: String): Boolean {
@@ -450,8 +449,7 @@ class CrashReproductionChecker(
             }
             generatedTestClasses += generator.testKlassName
             descriptors[generator.testKlassName] = parameters
-            preconditions[generator.testKlassName] = lastPrecondition!!
-            lastPrecondition = null
+            preconditions[generator.testKlassName] = lastPrecondition[parameters]!!
             return true
         } catch (e: CompilationException) {
             log.error("Failed to compile test file $testFile")
