@@ -229,7 +229,7 @@ abstract class HeapState(
     }
 
     fun toString(stateEnumeration: Map<HeapState, Int>) = buildString {
-        appendLine("[[${this@HeapState.javaClass.simpleName} #${stateEnumeration[this@HeapState]}]]")
+        appendLine("[[${this@HeapState.javaClass.simpleName} #${stateEnumeration[this@HeapState]}]] #${super.hashCode().toString(16)}")
         appendLine(additionalToString(stateEnumeration))
         appendLine(objectGraphToString())
     }
@@ -240,11 +240,13 @@ abstract class HeapState(
         ctx: ExecutionContext,
         objectDescriptors: Set<ObjectDescriptor>
     ): Pair<List<ActionSequence>, Map<ObjectDescriptor, ActionSequence>>? {
+//        log.debug("objectDescriptors.size = ${objectDescriptors.size}, activeObjects.size = ${activeObjects.size}")
         if (objectDescriptors.size > activeObjects.size) {
             return null
         }
         val concreteMapper = ConcreteMapper(ctx, objectDescriptors)
         val mapping = concreteMapper.findMapping(emptyMap(), emptyMap()) ?: return null
+        check(mapping.terms.size == terms.size)
         val result = restoreCalls(ctx, mapping.terms)
         val objectGenerators = objectDescriptors.associateWith { descriptor ->
             val graphObject = mapping.mapping.getValue(descriptor)
@@ -282,6 +284,7 @@ abstract class HeapState(
             reverseMapping: Map<GraphObject, ObjectDescriptor>
         ): ConcreteMapping? {
             val descriptor = activeObjectDesc.firstOrNull { !mapping.containsKey(it) }
+            log.debug("mapping = $mapping, revMapping = $reverseMapping")
             if (descriptor == null) {
                 var concretePredicateState = predicateState
                 for ((desc, obj) in mapping) {
@@ -296,6 +299,7 @@ abstract class HeapState(
                 val result = AsyncSMTProxySolver(ctx).use {
                     it.isPathPossibleAsync(concretePredicateState, emptyState())
                 }
+                log.debug("Checking concrete mapping, result: ${result.javaClass.simpleName}")
                 if (result !is Result.SatResult) {
                     return null
                 }
@@ -308,10 +312,13 @@ abstract class HeapState(
                 val newMapping = mapping.toMutableMap()
                 val newReverseMapping = reverseMapping.toMutableMap()
                 if (!tryAddMapping(newMapping, newReverseMapping, descriptor, mapTo)) {
+                    log.debug("Couldn't map $descriptor and $mapTo")
                     continue
                 }
+                log.debug("Mapped $descriptor and $mapTo")
                 findMapping(newMapping, newReverseMapping)?.let { return it }
             }
+            log.debug("Failed to find mapping: mapping = $mapping, revMapping = $reverseMapping")
             return null
         }
 
@@ -321,11 +328,14 @@ abstract class HeapState(
             desc: ObjectDescriptor,
             mapTo: GraphObject,
         ): Boolean {
+            log.debug("try adding mapping between $desc and $mapTo")
             if (desc.type != mapTo.type || (desc in activeObjectDesc && mapTo !in activeObjects)) {
+                log.debug("failed adding desc.type = ${desc.type}, mapTo.type = ${mapTo.type}, desc is active = ${desc in activeObjectDesc}, mapTo is active = ${mapTo in activeObjects}")
                 return false
             }
             mapping[desc] = mapTo
             reverseMapping[mapTo] = desc
+            log.debug("added to ds between $desc and $mapTo, current mapping = $mapping, revMapping = $reverseMapping")
             for ((field, value) in desc.fields) {
                 when (field.second) {
                     is KexNull, is KexClass -> {}
@@ -337,11 +347,13 @@ abstract class HeapState(
                 val otherValue = mapTo.objectFields.getOrDefault(field, GraphVertex.Null)
                 if (value == ConstantDescriptor.Null) {
                     if (otherValue.type !is KexNull) {
+                        log.debug("descriptor field is null, but object field is not null")
                         return false
                     }
                     continue
                 }
                 if (otherValue.type is KexNull) {
+                    log.debug("object field is null, but descriptor field is $value")
                     return false
                 }
                 value as ObjectDescriptor
@@ -349,10 +361,14 @@ abstract class HeapState(
                 val map1 = mapping[value]
                 val map2 = reverseMapping[otherValue]
                 if (map1 == null && map2 == null) {
+                    log.debug("recursively mapping $value and $otherValue")
                     if (!tryAddMapping(mapping, reverseMapping, value, otherValue)) {
+                        log.debug("Couldn't map $value and $otherValue")
                         return false
                     }
+                    log.debug("Mapped $value and $otherValue")
                 } else if (map1 != otherValue && map2 != value) {
+                    log.debug("Existing mapping for $value and $otherValue is incorrect")
                     return false
                 }
             }

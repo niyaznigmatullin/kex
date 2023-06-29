@@ -250,9 +250,6 @@ class GraphBuilder(val ctx: ExecutionContext, klasses: Set<Class>) : TermBuilder
                         break
                     }
                     log.debug("oldStates iteration $l: ${oldStates.size}")
-                    if (l == 0) {
-                        log.debug("{}", oldStates)
-                    }
                 }
                 log.debug("the number of states = ${allStates.size}")
                 val stateEnumeration = allStates.withIndex().associate { (index, state) -> state to index }

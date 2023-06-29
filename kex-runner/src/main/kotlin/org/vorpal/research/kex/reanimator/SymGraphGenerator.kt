@@ -16,6 +16,7 @@ import org.vorpal.research.kex.smt.SMTModel
 import org.vorpal.research.kex.state.PredicateState
 import org.vorpal.research.kfg.ir.Class
 import org.vorpal.research.kfg.ir.Method
+import org.vorpal.research.kthelper.logging.log
 import java.nio.file.Path
 
 class SymGraphGenerator(
@@ -32,6 +33,7 @@ class SymGraphGenerator(
 //    val testKlassName = printer.fullKlassName
 
     suspend fun generate(descriptors: Parameters<Descriptor>): Boolean {
+        log.debug("Descriptors to generate: $descriptors")
         val (params, sequence) = getActionSequences(descriptors) ?: return false
         printer.print(method, params, sequence)
         return true
@@ -54,6 +56,7 @@ class SymGraphGenerator(
             }
         }
         val result = graphBuilder.restoreActionSequences(objectDescriptors)
+        log.debug("getActionSequences: call restoreActionSequences, result = $result")
         val (rootSequence, mapping) = result ?: return null
         val instance = descriptors.instance?.let { mapping.getValue(it as ObjectDescriptor) }
         val arguments = descriptors.arguments.map {

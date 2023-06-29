@@ -32,9 +32,7 @@ class SymGraphAS2JavaPrinter(ctx: ExecutionContext, packageName: String, klassNa
             }
         }
         resolveTypes(actionSequence)
-        tryOrNull {
-            actionSequences.printAsJava()
-            actionSequence.printAsJava()
-        }
+        actionSequences.printAsJava()
+        actionSequence.printAsJava()
     }
 }
