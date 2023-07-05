@@ -177,7 +177,9 @@ class MethodAbstractlyInvocator(
         val concreteTypeInfo = state.concreteValueMap.mapValues { it.value.type }.filterValues { it.isJavaRt }
             .mapValues { it.value.rtMapped }.toTypeMap()
         val (predicateState, result) = checker.prepareAndCheckWithState(method, clauses + query, concreteTypeInfo)
-        check(result is Result.SatResult)
+        check(result is Result.SatResult) {
+            "result = ${result.javaClass}"
+        }
         val descriptors = generateFinalObjectsState(method, ctx, result.model, checker.state)
         return descriptors to predicateState
     }
