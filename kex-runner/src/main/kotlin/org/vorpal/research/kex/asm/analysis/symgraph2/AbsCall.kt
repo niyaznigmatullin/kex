@@ -11,10 +11,19 @@ import org.vorpal.research.kthelper.logging.log
 
 data class AbsCall(val method: Method, val thisArg: GraphVertex, val arguments: List<Argument>) {
     suspend fun call(ctx: ExecutionContext, state: HeapState): Collection<CallResult> {
-        return withTimeoutOrNull(20000) {
+        val result = withTimeoutOrNull(20000) {
             log.debug("Calling here: $state, with abstract call ${this@AbsCall}")
-            MethodAbstractlyInvocator(ctx, method).invokeMethod(state, thisArg, arguments)
-        } ?: emptyList()
+            val result = MethodAbstractlyInvocator(ctx, method).invokeMethod(state, thisArg, arguments)
+            log.debug("Finished successfully: $state, with abstract call ${this@AbsCall}")
+            result
+        }
+        return when (result) {
+            null -> {
+                log.debug("Finished with timeout: $state, with abstract call ${this@AbsCall}")
+                emptyList()
+            }
+            else -> result
+        }
     }
 
     fun setPrimitiveTerms(mapping: Map<ArgumentTerm, Term>): AbsCall {

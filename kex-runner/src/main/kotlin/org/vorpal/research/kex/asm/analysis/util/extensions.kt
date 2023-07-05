@@ -19,6 +19,7 @@ import org.vorpal.research.kex.smt.AsyncIncrementalChecker
 import org.vorpal.research.kex.smt.Result
 import org.vorpal.research.kex.state.IncrementalPredicateState
 import org.vorpal.research.kex.state.PredicateQuery
+import org.vorpal.research.kex.state.PredicateState
 import org.vorpal.research.kex.state.term.term
 import org.vorpal.research.kex.state.transformer.SymbolicStateForwardSlicer
 import org.vorpal.research.kex.state.transformer.collectArguments
@@ -59,6 +60,26 @@ suspend fun Method.checkAsync(ctx: ExecutionContext, state: SymbolicState): Para
         .mapValues { it.value.rtMapped }
         .toTypeMap()
     val result = checker.prepareAndCheck(this, clauses + query, concreteTypeInfo)
+    if (result !is Result.SatResult) {
+        return null
+    }
+
+    return try {
+        generateInitialDescriptors(this, ctx, result.model, checker.state)
+            .concreteParameters(ctx.cm, ctx.accessLevel, ctx.random).also {
+                log.debug { "Generated params:\n$it" }
+            }
+            .filterStaticFinals(ctx.cm)
+            .filterIgnoredStatic()
+    } catch (e: Throwable) {
+        log.error("Error during descriptor generation: ", e)
+        null
+    }
+}
+
+suspend fun Method.checkAsyncByPredicates(ctx: ExecutionContext, predicates: PredicateState): Parameters<Descriptor>? {
+    val checker = AsyncChecker(this, ctx)
+    val result = checker.prepareAndCheck(this, predicates)
     if (result !is Result.SatResult) {
         return null
     }

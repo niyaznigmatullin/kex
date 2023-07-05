@@ -2,10 +2,7 @@ package org.vorpal.research.kex.asm.analysis.symgraph2
 
 import kotlinx.coroutines.*
 import org.vorpal.research.kex.ExecutionContext
-import org.vorpal.research.kex.asm.analysis.symgraph2.heapstate.EmptyHeapState
-import org.vorpal.research.kex.asm.analysis.symgraph2.heapstate.HeapState
-import org.vorpal.research.kex.asm.analysis.symgraph2.heapstate.InvocationResultHeapState
-import org.vorpal.research.kex.asm.analysis.symgraph2.heapstate.UnionHeapState
+import org.vorpal.research.kex.asm.analysis.symgraph2.heapstate.*
 import org.vorpal.research.kex.asm.analysis.symgraph2.objects.GraphObject
 import org.vorpal.research.kex.asm.analysis.symgraph2.objects.GraphVertex
 import org.vorpal.research.kex.descriptor.ObjectDescriptor
@@ -15,6 +12,9 @@ import org.vorpal.research.kex.reanimator.actionsequence.ActionSequence
 import org.vorpal.research.kex.smt.AsyncSMTProxySolver
 import org.vorpal.research.kex.smt.Result
 import org.vorpal.research.kex.state.*
+import org.vorpal.research.kex.state.predicate.Predicate
+import org.vorpal.research.kex.state.predicate.path
+import org.vorpal.research.kex.state.predicate.state
 import org.vorpal.research.kex.state.term.*
 import org.vorpal.research.kex.state.transformer.TermRemapper
 import org.vorpal.research.kex.state.transformer.collectTerms
@@ -36,6 +36,7 @@ class GraphBuilder(val ctx: ExecutionContext, klasses: Set<Class>) : TermBuilder
     private var calls = 0
     private val activeStates = mutableSetOf<HeapState>()
     val allStates = mutableSetOf<HeapState>()
+    val allSymbolicStates = mutableSetOf<HeapSymbolicState>()
 
     val types: TypeFactory
         get() = ctx.types
@@ -234,7 +235,7 @@ class GraphBuilder(val ctx: ExecutionContext, klasses: Set<Class>) : TermBuilder
         }
     }
 
-    private fun getAbstractCalls(state: HeapState, m: Method): Collection<AbsCall> {
+    fun getAbstractCalls(state: HeapState, m: Method): Collection<AbsCall> {
         return AbsCallGenerator(state, m).generate()
     }
 
@@ -252,6 +253,7 @@ class GraphBuilder(val ctx: ExecutionContext, klasses: Set<Class>) : TermBuilder
                     log.debug("oldStates iteration $l: ${oldStates.size}")
                 }
                 log.debug("the number of states = ${allStates.size}")
+                allSymbolicStates.addAll(allStates.map { it.buildSymbolicState() })
                 val stateEnumeration = allStates.withIndex().associate { (index, state) -> state to index }
                 log.debug(allStates.joinToString(separator = "\n") { state ->
                     state.toString(stateEnumeration)
@@ -260,6 +262,7 @@ class GraphBuilder(val ctx: ExecutionContext, klasses: Set<Class>) : TermBuilder
             }
             log.debug("Took ${time}ms")
         }
+        log.debug("End building graph")
     }
 
     suspend fun restoreActionSequences(objectDescriptors: Set<ObjectDescriptor>): Pair<List<ActionSequence>, Map<ObjectDescriptor, ActionSequence>>? {
@@ -280,5 +283,40 @@ class GraphBuilder(val ctx: ExecutionContext, klasses: Set<Class>) : TermBuilder
 //            appendLine(mapping.terms)
 //            appendLine(result.callList)
 //        }
+    }
+
+    private fun HeapState.buildSymbolicState(): HeapSymbolicState {
+        val objectTerms = buildMap {
+            for (v in objects) {
+                val term = if (v == GraphVertex.Null) {
+                    const(null)
+                } else {
+                    generate(v.type)
+                }
+                put(v, term)
+            }
+        }
+        val predicates = buildList {
+            for (v in objectTerms.values) {
+                for (u in objectTerms.values) {
+                    if (v == u) {
+                        break
+                    }
+                    add(path { (v eq u) equality const(false) })
+                }
+            }
+            for ((obj, term) in objectTerms) {
+                if (obj !is GraphObject) {
+                    continue
+                }
+                for ((field, fieldValue) in obj.objectFields) {
+                    add(path { (term.field(field).load() eq objectTerms.getValue(fieldValue)) equality const(true)})
+                }
+                for ((field, fieldValue) in obj.primitiveFields) {
+                    add(path { (term.field(field).load() eq fieldValue) equality const(true) })
+                }
+            }
+        }
+        return HeapSymbolicState(this, predicateState + BasicState(predicates), objectTerms)
     }
 }

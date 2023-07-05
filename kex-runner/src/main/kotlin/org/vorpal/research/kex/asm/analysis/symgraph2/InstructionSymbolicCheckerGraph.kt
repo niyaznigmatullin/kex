@@ -3,6 +3,7 @@ package org.vorpal.research.kex.asm.analysis.symgraph2
 import kotlinx.coroutines.*
 import org.vorpal.research.kex.ExecutionContext
 import org.vorpal.research.kex.asm.analysis.symbolic.*
+import org.vorpal.research.kex.asm.analysis.util.checkAsyncByPredicates
 import org.vorpal.research.kex.compile.CompilationException
 import org.vorpal.research.kex.config.kexConfig
 import org.vorpal.research.kex.descriptor.Descriptor
@@ -10,9 +11,16 @@ import org.vorpal.research.kex.parameters.Parameters
 import org.vorpal.research.kex.reanimator.SymGraphGenerator
 import org.vorpal.research.kex.reanimator.UnsafeGenerator
 import org.vorpal.research.kex.reanimator.codegen.klassName
+import org.vorpal.research.kex.state.BasicState
+import org.vorpal.research.kex.state.PredicateState
+import org.vorpal.research.kex.state.predicate.Predicate
+import org.vorpal.research.kex.state.predicate.path
+import org.vorpal.research.kex.state.predicate.state
+import org.vorpal.research.kex.trace.symbolic.*
 import org.vorpal.research.kex.util.newFixedThreadPoolContextWithMDC
 import org.vorpal.research.kfg.ir.Method
 import org.vorpal.research.kfg.ir.value.instruction.Instruction
+import org.vorpal.research.kfg.ir.value.instruction.ReturnInst
 import org.vorpal.research.kfg.type.ClassType
 import org.vorpal.research.kthelper.logging.log
 import kotlin.time.Duration.Companion.seconds
@@ -52,9 +60,12 @@ class InstructionSymbolicCheckerGraph(
 //                    })
                 }
             }.toSet())
-            graphBuilder.build(5)
+            graphBuilder.build(3)
+            log.debug("After building the graph")
             runBlocking(coroutineContext) {
+                log.debug("Inside runBlocking")
                 withTimeoutOrNull(timeLimit.seconds) {
+                    log.debug("Inside withTimeoutOrNull")
                     targets.map {
                         async {
                             with(InstructionSymbolicCheckerGraph(context, it, graphBuilder)) {
@@ -92,6 +103,61 @@ class InstructionSymbolicCheckerGraph(
             compilerHelper.compileFile(testFile)
         } catch (e: CompilationException) {
             log.error("Failed to compile test file $testFile")
+        }
+    }
+
+    override suspend fun traverseReturnInst(inst: ReturnInst) {
+        val traverserState = currentState ?: return
+        val stackTrace = traverserState.stackTrace
+        val stackTraceElement = stackTrace.lastOrNull()
+        val receiver = stackTraceElement?.instruction
+        if (receiver == null) {
+            log.debug("Return Instruction for method: $rootMethod")
+            val graphSymbolicStates = graphBuilder.allSymbolicStates
+            val arguments = buildList {
+                for ((index, type) in rootMethod.argTypes.withIndex()) {
+                    add(arg(type.symbolicType, index))
+                }
+            }
+            val thisTerm = if (!rootMethod.isStatic && !rootMethod.isConstructor) {
+                `this`(rootMethod.klass.symbolicClass)
+            } else {
+                null
+            }
+            val currentPredicateState = with(traverserState.symbolicState) {
+                clauses.asState() + path.asState()
+            }
+
+            for (graphState in graphSymbolicStates) {
+                val graphSymbolicState = graphState.predicateState
+                for (absCall in graphBuilder.getAbstractCalls(graphState.heapState, rootMethod)) {
+                    val predicates = mutableListOf<Predicate>()
+                    if (thisTerm != null) {
+                        val mappedThis = graphState.objectMapping.getValue(absCall.thisArg)
+                        predicates.add(path { (thisTerm eq mappedThis) equality const(true) })
+                    }
+                    for ((argTerm, mappedArg) in arguments.zip(absCall.arguments)) {
+                        if (mappedArg is ObjectArgument) {
+                            val mappedTerm = graphState.objectMapping.getValue(mappedArg.obj)
+                            predicates.add(path { (argTerm eq mappedTerm) equality const(true) })
+                        }
+                    }
+                    val mappedSymbolicState = graphSymbolicState + BasicState(predicates) + currentPredicateState
+                    log.debug("Return Instruction check state: $mappedSymbolicState")
+                    val result = rootMethod.checkAsyncByPredicates(ctx, mappedSymbolicState)
+                    if (result != null) {
+                        log.debug("Return Instruction add: $mappedSymbolicState")
+                        report(inst, result, "sh")
+                        currentState = null
+                        return
+                    } else {
+                        log.debug("Return Instruction can't see: $mappedSymbolicState")
+                    }
+                }
+            }
+            super.traverseReturnInst(inst)
+        } else {
+            super.traverseReturnInst(inst)
         }
     }
 
