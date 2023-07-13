@@ -302,7 +302,7 @@ class GraphBuilder(val ctx: ExecutionContext, klasses: Set<Class>) : TermBuilder
                     if (v == u) {
                         break
                     }
-                    add(path { (v eq u) equality const(false) })
+                    add(path { v inequality u })
                 }
             }
             for ((obj, term) in objectTerms) {
@@ -310,10 +310,10 @@ class GraphBuilder(val ctx: ExecutionContext, klasses: Set<Class>) : TermBuilder
                     continue
                 }
                 for ((field, fieldValue) in obj.objectFields) {
-                    add(path { (term.field(field).load() eq objectTerms.getValue(fieldValue)) equality const(true)})
+                    add(path { term.field(field).load() equality objectTerms.getValue(fieldValue) })
                 }
                 for ((field, fieldValue) in obj.primitiveFields) {
-                    add(path { (term.field(field).load() eq fieldValue) equality const(true) })
+                    add(path { term.field(field).load() equality fieldValue })
                 }
             }
         }
