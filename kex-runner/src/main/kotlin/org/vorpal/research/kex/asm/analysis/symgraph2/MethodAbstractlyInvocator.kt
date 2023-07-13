@@ -22,6 +22,9 @@ import org.vorpal.research.kex.state.term.Term
 import org.vorpal.research.kex.state.transformer.*
 import org.vorpal.research.kex.trace.symbolic.*
 import org.vorpal.research.kfg.ir.Method
+import org.vorpal.research.kfg.ir.value.Constant
+import org.vorpal.research.kfg.ir.value.Value
+import org.vorpal.research.kfg.ir.value.ValueFactory
 import org.vorpal.research.kfg.ir.value.instruction.Instruction
 import org.vorpal.research.kfg.ir.value.instruction.ReturnInst
 import org.vorpal.research.kfg.type.NullType
@@ -148,12 +151,29 @@ class MethodAbstractlyInvocator(
                 obj as GraphObject
                 if (thisArg != obj && !arguments.any { it is ObjectArgument && it.obj == obj }) {
                     statePredicates.add(state { objectTerm.new() })
+                    addDefaultFields(objectTerm)
                 }
                 nullCheckPredicates.add(path { (objectTerm eq null) equality false })
                 addFieldsTo(obj.objectFields.mapValues { terms.getValue(it.value) }, objectTerm)
                 addFieldsTo(obj.primitiveFields, objectTerm)
             }
             return terms
+        }
+
+        private fun addDefaultFields(objectTerm: Term) {
+            val fields = (objectTerm.type as KexClass).kfgClass(cm.type).fields
+            for (f in fields) {
+                val default = f.defaultValue
+                val value = if (default == null) {
+                    cm.value.getZero(f.type) as? Constant ?: unreachable("getZero returned not constant")
+                } else {
+                    default as? Constant ?: unreachable("default value is not constant")
+                }
+                val term = const(value)
+                statePredicates.add(state {
+                    objectTerm.field(f.type.symbolicType, f.name).store(term)
+                })
+            }
         }
 
         private fun addFieldsTo(fieldsToAdd: Map<Pair<String, KexType>, Term>, objectTerm: Term) {
