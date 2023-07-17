@@ -13,17 +13,13 @@ import org.vorpal.research.kex.reanimator.SymGraphGenerator
 import org.vorpal.research.kex.reanimator.UnsafeGenerator
 import org.vorpal.research.kex.reanimator.codegen.klassName
 import org.vorpal.research.kex.state.BasicState
-import org.vorpal.research.kex.state.PredicateState
 import org.vorpal.research.kex.state.predicate.Predicate
 import org.vorpal.research.kex.state.predicate.path
-import org.vorpal.research.kex.state.predicate.state
 import org.vorpal.research.kex.state.term.Term
-import org.vorpal.research.kex.trace.symbolic.*
 import org.vorpal.research.kex.util.newFixedThreadPoolContextWithMDC
 import org.vorpal.research.kfg.ir.BasicBlock
 import org.vorpal.research.kfg.ir.Method
 import org.vorpal.research.kfg.ir.value.Value
-import org.vorpal.research.kfg.ir.value.instruction.CatchInst
 import org.vorpal.research.kfg.ir.value.instruction.Instruction
 import org.vorpal.research.kfg.ir.value.instruction.ReturnInst
 import org.vorpal.research.kfg.type.ClassType
@@ -142,11 +138,15 @@ class InstructionSymbolicCheckerGraph(
                     }
                 }
                 val mappedSymbolicState = graphSymbolicState + BasicState(predicates) + currentPredicateState
-                log.debug("Exc/Return Instruction check state: $mappedSymbolicState")
-                val result = rootMethod.checkAsyncByPredicates(ctx, mappedSymbolicState)
+                log.debug("Exc/Return Instruction check state for method: $rootMethod: $mappedSymbolicState with graph state ${
+                    graphState.heapState.toString(
+                        emptyMap()
+                    )
+                }")
+                val (result, changedState) = rootMethod.checkAsyncByPredicates(ctx, mappedSymbolicState)
                 if (result != null) {
                     log.debug(
-                        "Exc/Return Instruction add: $mappedSymbolicState with result $result with graph state ${
+                        "Exc/Return Instruction add for method: $rootMethod: $mappedSymbolicState, changedState = $changedState with result $result with graph state ${
                             graphState.heapState.toString(
                                 emptyMap()
                             )
@@ -154,7 +154,11 @@ class InstructionSymbolicCheckerGraph(
                     )
                     return result
                 } else {
-                    log.debug("Exc/Return Instruction can't see: $mappedSymbolicState")
+                    log.debug("Exc/Return Instruction can't see for method: $rootMethod: $mappedSymbolicState, changedState = $changedState with graph state ${
+                        graphState.heapState.toString(
+                            emptyMap()
+                        )
+                    }")
                 }
             }
         }
