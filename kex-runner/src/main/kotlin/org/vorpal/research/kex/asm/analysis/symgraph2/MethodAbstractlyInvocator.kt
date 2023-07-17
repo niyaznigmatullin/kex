@@ -43,15 +43,17 @@ class MethodAbstractlyInvocator(
     private val invocationPaths = mutableListOf<CallResult>()
     private val termsOfFieldsBefore = MutableFieldContainer()
 
+    fun getGeneratedInvocationPaths() = invocationPaths
+
     suspend fun invokeMethod(
         heapState: HeapState,
         thisArg: GraphVertex,
         arguments: List<Argument>
-    ): Collection<CallResult> {
+    ) {
         if (thisArg == GraphVertex.Null && (!rootMethod.isStatic && !rootMethod.isConstructor)) {
-            return emptyList()
+            return
         }
-        val initializer = ObjectInitializer(heapState.objects, thisArg, arguments)
+        val initializer = ObjectInitializer(heapState.objects, thisArg, arguments, rootMethod.isConstructor)
         val terms = initializer.generateObjectTerms()
         val statePredicates = initializer.statePredicates
         val nullCheckPredicates = initializer.nullCheckPredicates
@@ -128,14 +130,13 @@ class MethodAbstractlyInvocator(
             traverseBlock(currentBlock)
             yield()
         }
-
-        return invocationPaths
     }
 
     inner class ObjectInitializer(
         private val objects: Collection<GraphVertex>,
         private val thisArg: GraphVertex,
-        private val arguments: List<Argument>
+        private val arguments: List<Argument>,
+        private val isConstructor: Boolean,
     ) {
         val statePredicates = mutableListOf<Predicate>()
         val nullCheckPredicates = mutableListOf<Predicate>()
@@ -157,12 +158,18 @@ class MethodAbstractlyInvocator(
                 addFieldsTo(obj.objectFields.mapValues { terms.getValue(it.value) }, objectTerm)
                 addFieldsTo(obj.primitiveFields, objectTerm)
             }
+            if (isConstructor) {
+                addDefaultFields(`this`(rootMethod.klass.symbolicClass))
+            }
             return terms
         }
 
         private fun addDefaultFields(objectTerm: Term) {
             val fields = (objectTerm.type as KexClass).kfgClass(cm.type).fields
             for (f in fields) {
+                if (f.isStatic) {
+                    continue
+                }
                 val default = f.defaultValue
                 val value = if (default == null) {
                     cm.value.getZero(f.type) as? Constant ?: unreachable("getZero returned not constant")
