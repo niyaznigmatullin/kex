@@ -73,7 +73,7 @@ class InvocationResultHeapState(
                     oldObjActions.getValue(arg.obj)
                 }
 
-                else -> unreachable { "wowowow" }
+                else -> unreachable { log.debug("Descriptor is not primitive or object: $arg") }
             }
         }
         val methodCall = when {

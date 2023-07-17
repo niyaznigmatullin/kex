@@ -218,6 +218,8 @@ abstract class HeapState(
                 is GraphObject -> {
                     obj.primitiveFields.map { (field, value) ->
                         ".${field.first} = $value"
+                    }.joinToString(", ") + ", " + obj.objectFields.map { (field, value) ->
+                        ".${field.first} = ${stateToIndex.getValue(value)}"
                     }.joinToString(", ")
                 }
 

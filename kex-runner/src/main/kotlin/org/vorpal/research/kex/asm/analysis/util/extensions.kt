@@ -77,11 +77,11 @@ suspend fun Method.checkAsync(ctx: ExecutionContext, state: SymbolicState): Para
     }
 }
 
-suspend fun Method.checkAsyncByPredicates(ctx: ExecutionContext, predicates: PredicateState): Parameters<Descriptor>? {
+suspend fun Method.checkAsyncByPredicates(ctx: ExecutionContext, predicates: PredicateState): Pair<Parameters<Descriptor>?, PredicateState> {
     val checker = AsyncChecker(this, ctx)
-    val result = checker.prepareAndCheck(this, predicates)
+    val (state, result) = checker.prepareAndCheckWithState(this, predicates)
     if (result !is Result.SatResult) {
-        return null
+        return null to state
     }
 
     return try {
@@ -94,7 +94,7 @@ suspend fun Method.checkAsyncByPredicates(ctx: ExecutionContext, predicates: Pre
     } catch (e: Throwable) {
         log.error("Error during descriptor generation: ", e)
         null
-    }
+    } to state
 }
 
 @Suppress("unused")
