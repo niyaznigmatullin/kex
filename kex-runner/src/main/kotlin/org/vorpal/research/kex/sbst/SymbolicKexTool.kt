@@ -6,6 +6,7 @@ import kotlinx.serialization.InternalSerializationApi
 import org.vorpal.research.kex.ExecutionContext
 import org.vorpal.research.kex.asm.analysis.symgraph2.InstructionSymbolicCheckerGraph
 import org.vorpal.research.kex.asm.manager.ClassInstantiationDetector
+import org.vorpal.research.kex.asm.transform.LoopDeroller
 import org.vorpal.research.kex.asm.util.AccessModifier
 import org.vorpal.research.kex.config.FileConfig
 import org.vorpal.research.kex.config.RuntimeConfig
@@ -80,6 +81,7 @@ class SymbolicKexTool : Tool {
 
             executePipeline(cm, target) {
                 +ClassInstantiationDetector(context)
+                +LoopDeroller(cm)
             }
         }
         log.debug("Executed instrumentation pipeline")
