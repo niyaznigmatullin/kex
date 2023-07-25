@@ -50,7 +50,11 @@ suspend fun Method.analyzeOrTimeout(
     }
 }
 
-suspend fun Method.checkAsync(ctx: ExecutionContext, state: SymbolicState): Parameters<Descriptor>? {
+suspend fun Method.checkAsync(
+    ctx: ExecutionContext,
+    state: SymbolicState,
+    enableInlining: Boolean = false
+): Parameters<Descriptor>? {
     val checker = AsyncChecker(this, ctx)
     val clauses = state.clauses.asState()
     val query = state.path.asState()
@@ -59,7 +63,7 @@ suspend fun Method.checkAsync(ctx: ExecutionContext, state: SymbolicState): Para
         .filterValues { it.isJavaRt }
         .mapValues { it.value.rtMapped }
         .toTypeMap()
-    val result = checker.prepareAndCheck(this, clauses + query, concreteTypeInfo)
+    val result = checker.prepareAndCheck(this, clauses + query, concreteTypeInfo, enableInlining)
     if (result !is Result.SatResult) {
         return null
     }
@@ -79,7 +83,8 @@ suspend fun Method.checkAsync(ctx: ExecutionContext, state: SymbolicState): Para
 
 suspend fun Method.checkAsyncByPredicates(ctx: ExecutionContext, predicates: PredicateState): Pair<Parameters<Descriptor>?, PredicateState> {
     val checker = AsyncChecker(this, ctx)
-    val (state, result) = checker.prepareAndCheckWithState(this, predicates)
+    val result = checker.prepareAndCheck(this, predicates)
+    val state = checker.state
     if (result !is Result.SatResult) {
         return null to state
     }
@@ -100,7 +105,8 @@ suspend fun Method.checkAsyncByPredicates(ctx: ExecutionContext, predicates: Pre
 @Suppress("unused")
 suspend fun Method.checkAsyncAndSlice(
     ctx: ExecutionContext,
-    state: SymbolicState
+    state: SymbolicState,
+    enableInlining: Boolean = false
 ): Pair<Parameters<Descriptor>, ConstraintExceptionPrecondition>? {
     val checker = AsyncChecker(this, ctx)
     val clauses = state.clauses.asState()
@@ -110,7 +116,7 @@ suspend fun Method.checkAsyncAndSlice(
         .filterValues { it.isJavaRt }
         .mapValues { it.value.rtMapped }
         .toTypeMap()
-    val result = checker.prepareAndCheck(this, clauses + query, concreteTypeInfo)
+    val result = checker.prepareAndCheck(this, clauses + query, concreteTypeInfo, enableInlining)
     if (result !is Result.SatResult) {
         return null
     }
@@ -142,7 +148,8 @@ suspend fun Method.checkAsyncAndSlice(
 suspend fun Method.checkAsyncIncremental(
     ctx: ExecutionContext,
     state: SymbolicState,
-    queries: List<SymbolicState>
+    queries: List<SymbolicState>,
+    enableInlining: Boolean = false
 ): List<Parameters<Descriptor>?> {
     val checker = AsyncIncrementalChecker(this, ctx)
     val clauses = state.clauses.asState()
@@ -159,7 +166,8 @@ suspend fun Method.checkAsyncIncremental(
             clauses + query,
             queries.map { PredicateQuery(it.clauses.asState() + it.path.asState()) }.toPersistentList()
         ),
-        concreteTypeInfo
+        concreteTypeInfo,
+        enableInlining
     )
 
     return results.mapIndexed { index, result ->
@@ -187,7 +195,8 @@ suspend fun Method.checkAsyncIncremental(
 suspend fun Method.checkAsyncIncrementalAndSlice(
     ctx: ExecutionContext,
     state: SymbolicState,
-    queries: List<SymbolicState>
+    queries: List<SymbolicState>,
+    enableInlining: Boolean = false
 ): List<Pair<Parameters<Descriptor>, ConstraintExceptionPrecondition>?> {
     val checker = AsyncIncrementalChecker(this, ctx)
     val clauses = state.clauses.asState()
@@ -204,7 +213,8 @@ suspend fun Method.checkAsyncIncrementalAndSlice(
             clauses + query,
             queries.map { PredicateQuery(it.clauses.asState() + it.path.asState()) }.toPersistentList()
         ),
-        concreteTypeInfo
+        concreteTypeInfo,
+        enableInlining
     )
 
     return results.mapIndexed { index, result ->
@@ -212,9 +222,8 @@ suspend fun Method.checkAsyncIncrementalAndSlice(
             is Result.SatResult -> try {
                 val fullPS = checker.state + checker.queries[index].hardConstraints
                 val (params, aa) = generateInitialDescriptorsAndAA(this, ctx, result.model, fullPS)
-                val filteredParams = params.concreteParameters(ctx.cm, ctx.accessLevel, ctx.random).also {
-                    log.debug { "Generated params:\n$it" }
-                }
+                val filteredParams = params.concreteParameters(ctx.cm, ctx.accessLevel, ctx.random)
+                    .also { log.debug { "Generated params:\n$it" } }
                     .filterStaticFinals(ctx.cm)
                     .filterIgnoredStatic()
 
