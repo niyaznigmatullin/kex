@@ -5,6 +5,7 @@ import org.vorpal.research.kex.ExecutionContext
 import org.vorpal.research.kex.asm.analysis.symgraph2.heapstate.*
 import org.vorpal.research.kex.asm.analysis.symgraph2.objects.GraphObject
 import org.vorpal.research.kex.asm.analysis.symgraph2.objects.GraphVertex
+import org.vorpal.research.kex.config.kexConfig
 import org.vorpal.research.kex.descriptor.ObjectDescriptor
 import org.vorpal.research.kex.ktype.KexClass
 import org.vorpal.research.kex.ktype.kexType
@@ -32,7 +33,10 @@ class GraphBuilder(val ctx: ExecutionContext, klasses: Set<Class>) : TermBuilder
     private val publicMethods = klasses.flatMap { it.allMethods }.filter {
         it.isPublic && !it.isNative && (!it.isStatic || it.returnType.kexType is KexClass)
     }
-    private val coroutineContext = newFixedThreadPoolContextWithMDC(5, "abstract-caller")
+    private val coroutineContext = newFixedThreadPoolContextWithMDC(
+        kexConfig.getIntValue("symbolic", "numberOfExecutors", 8),
+        "abstract-caller"
+    )
     private var calls = 0
     private val activeStates = mutableSetOf<HeapState>()
     val allStates = mutableSetOf<HeapState>()

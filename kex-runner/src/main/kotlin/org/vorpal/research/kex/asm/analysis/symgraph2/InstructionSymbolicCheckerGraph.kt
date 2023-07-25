@@ -4,6 +4,7 @@ import kotlinx.collections.immutable.PersistentMap
 import kotlinx.coroutines.*
 import org.vorpal.research.kex.ExecutionContext
 import org.vorpal.research.kex.asm.analysis.symbolic.*
+import org.vorpal.research.kex.asm.analysis.symgraph2.StacktracePathSelector
 import org.vorpal.research.kex.asm.analysis.util.checkAsyncByPredicates
 import org.vorpal.research.kex.compile.CompilationException
 import org.vorpal.research.kex.config.kexConfig
@@ -32,7 +33,7 @@ class InstructionSymbolicCheckerGraph(
     rootMethod: Method,
     private val graphBuilder: GraphBuilder
 ) : SymbolicTraverser(ctx, rootMethod) {
-    override val pathSelector: SymbolicPathSelector = DequePathSelector()
+    override val pathSelector: SymbolicPathSelector = StacktracePathSelector()
     override val callResolver: SymbolicCallResolver = DefaultCallResolver(ctx)
     override val invokeDynamicResolver: SymbolicInvokeDynamicResolver = DefaultCallResolver(ctx)
     private val tests = mutableListOf<ReportedTest>()
@@ -61,7 +62,7 @@ class InstructionSymbolicCheckerGraph(
 //                    })
                 }
             }.toSet())
-            graphBuilder.build(3)
+            graphBuilder.build(4)
             log.debug("After building the graph")
             runBlocking(coroutineContext) {
                 log.debug("Inside runBlocking")
@@ -70,7 +71,9 @@ class InstructionSymbolicCheckerGraph(
                     targets.map {
                         async {
                             with(InstructionSymbolicCheckerGraph(context, it, graphBuilder)) {
-                                analyze()
+                                withTimeoutOrNull((timeLimit / 3).seconds) {
+                                    analyze()
+                                }
                                 generateTests()
                             }
                         }
