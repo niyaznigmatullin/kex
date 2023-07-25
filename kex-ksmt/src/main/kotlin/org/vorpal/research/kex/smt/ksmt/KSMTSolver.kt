@@ -57,6 +57,7 @@ import org.vorpal.research.kex.state.transformer.collectVariables
 import org.vorpal.research.kex.state.transformer.getConstStringMap
 import org.vorpal.research.kex.state.transformer.memspace
 import org.vorpal.research.kex.util.kapitalize
+import org.vorpal.research.kex.util.with
 import org.vorpal.research.kthelper.assert.ktassert
 import org.vorpal.research.kthelper.assert.unreachable
 import org.vorpal.research.kthelper.logging.debug
@@ -77,6 +78,7 @@ private val printSMTLib = kexConfig.getBooleanValue("smt", "logSMTLib", false)
 private val maxArrayLength = kexConfig.getIntValue("smt", "maxArrayLength", 1000)
 private val ksmtRunners = kexConfig.getIntValue("ksmt", "runners", 4)
 private val ksmtSolvers = kexConfig.getMultipleStringValue("ksmt", "solver")
+private val ksmtSeed = kexConfig.getIntValue("ksmt", "seed", 42)
 
 @Suppress("UNCHECKED_CAST")
 @AsyncSolver("ksmt")
@@ -116,7 +118,7 @@ class KSMTSolver(
     }
 
     override suspend fun isReachableAsync(state: PredicateState) =
-        isPathPossible(state, state.path)
+        isPathPossibleAsync(state, state.path)
 
     override suspend fun isPathPossibleAsync(state: PredicateState, path: PredicateState): Result =
         check(state, path) { it }
@@ -297,6 +299,21 @@ class KSMTSolver(
         else -> state
     }
 
+    private fun stringify(state: Bool_, query: Bool_, softConstraints: List<Bool_> = emptyList()): String = KZ3Solver(ef.ctx).use {
+        it.assert(state.asAxiom() as KExpr<KBoolSort>)
+        it.assert(ef.buildConstClassAxioms().asAxiom() as KExpr<KBoolSort>)
+        it.assert(query.axiom as KExpr<KBoolSort>)
+        it.assert(query.expr as KExpr<KBoolSort>)
+        for (softConstraint in softConstraints) {
+            it.assert(softConstraint.asAxiom() as KExpr<KBoolSort>)
+        }
+
+        val solverProp = KZ3Solver::class.declaredMemberProperties.first { prop -> prop.name == "solver" }
+        solverProp.isAccessible = true
+        val z3SolverInternal = solverProp.get(it) as com.microsoft.z3.Solver
+        z3SolverInternal.toString()
+    }
+
     private suspend fun check(state: Bool_, query: Bool_): Pair<KSolverStatus, Any> = buildSolver().use { solver ->
         if (logFormulae) {
             log.run {
@@ -307,19 +324,7 @@ class KSMTSolver(
 
         if (printSMTLib) {
             log.debug("SMTLib formula:")
-            log.debug(
-                KZ3Solver(ef.ctx).use {
-                    it.assert(state.asAxiom() as KExpr<KBoolSort>)
-                    it.assert(ef.buildConstClassAxioms().asAxiom() as KExpr<KBoolSort>)
-                    it.assert(query.axiom as KExpr<KBoolSort>)
-                    it.assert(query.expr as KExpr<KBoolSort>)
-
-                    val solverProp = KZ3Solver::class.declaredMemberProperties.first { prop -> prop.name == "solver" }
-                    solverProp.isAccessible = true
-                    val z3SolverInternal = solverProp.get(it) as com.microsoft.z3.Solver
-                    z3SolverInternal.toString()
-                }
-            )
+            log.debug(stringify(state, query))
         }
 
         solver.assertAsync(state.asAxiom() as KExpr<KBoolSort>)
@@ -355,7 +360,12 @@ class KSMTSolver(
 
     private suspend fun buildSolver(): KPortfolioSolver {
         if (!currentCoroutineContext().isActive) yield()
-        return portfolioSolverManager.createPortfolioSolver(ef.ctx)
+        return portfolioSolverManager.createPortfolioSolver(ef.ctx).also {
+            it.configureAsync {
+                setIntParameter("random_seed", ksmtSeed)
+                setIntParameter("seed", ksmtSeed)
+            }
+        }
     }
 
     private fun KSMTContext.recoverBitvectorProperty(
@@ -713,13 +723,14 @@ class KSMTSolver(
         val converter = KSMTConverter(executionContext)
         val ksmtState = converter.convert(state, ef, ctx)
         val ksmtQueries = queries.map { (hard, soft) ->
-            converter.convert(hard, ef, ctx) to soft.map { converter.convert(it, ef, ctx) }
+            val ctxCopy = KSMTContext(ctx)
+            Triple(converter.convert(hard, ef, ctx), soft.map { converter.convert(it, ef, ctx) }, ctxCopy)
         }
 
         log.debug("Check started")
         val results = checkIncremental(ksmtState, ksmtQueries)
         log.debug("Check finished")
-        results.mapIndexed { index, (status, any) ->
+        results.mapIndexed { index, (status, any, ctx) ->
             when (status) {
                 KSolverStatus.UNSAT -> Result.UnsatResult
                 KSolverStatus.UNKNOWN -> Result.UnknownResult(any as String)
@@ -754,8 +765,8 @@ class KSMTSolver(
 
     private suspend fun checkIncremental(
         state: Bool_,
-        queries: List<Pair<Bool_, List<Bool_>>>
-    ): List<Pair<KSolverStatus, Any>> = buildSolver().use { solver ->
+        queries: List<Triple<Bool_, List<Bool_>, KSMTContext>>
+    ): List<Triple<KSolverStatus, Any, KSMTContext>> = buildSolver().use { solver ->
         solver.assertAndTrackAsync(
             state.asAxiom() as KExpr<KBoolSort>,
             ef.ctx.mkConstDecl("State", ef.ctx.boolSort)
@@ -766,7 +777,7 @@ class KSMTSolver(
         )
         solver.push()
 
-        return queries.map { (hardConstraints, softConstraints) ->
+        return queries.map { (hardConstraints, softConstraints, ctx) ->
             solver.assertAndTrackAsync(
                 hardConstraints.asAxiom() as KExpr<KBoolSort>,
                 ef.ctx.mkConstDecl("HardConstraints", ef.ctx.boolSort)
@@ -787,7 +798,7 @@ class KSMTSolver(
             log.debug("Running KSMT solver")
             if (printSMTLib) {
                 log.debug("SMTLib formula:")
-                log.debug(solver)
+                log.debug(stringify(state, hardConstraints, softConstraints))
             }
 
             when (val result = solver.checkAndMinimize(softConstraintsMap)) {
@@ -816,7 +827,7 @@ class KSMTSolver(
                     solver.pop()
                 }
                 solver.push()
-            }
+            }.with(ctx)
         }
     }
 
