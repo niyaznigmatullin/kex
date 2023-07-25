@@ -156,7 +156,7 @@ class GraphBuilder(val ctx: ExecutionContext, klasses: Set<Class>) : TermBuilder
             val objMap = state.checkIsomorphism(newState) ?: continue
             val fieldMapping = makeReverseFieldMapping(state, objMap)
             val mappedNewPredicateState = TermRemapper(fieldMapping).apply(newState.predicateState)
-            val result = withTimeoutOrNull(200.milliseconds) {
+            val result = withTimeoutOrNull(500.milliseconds) {
                 AsyncSMTProxySolver(ctx).use {
                     it.definitelyImplies(mappedNewPredicateState, state.predicateState)
                 }
@@ -164,6 +164,7 @@ class GraphBuilder(val ctx: ExecutionContext, klasses: Set<Class>) : TermBuilder
             if (result != null && result) {
                 return null to null
             }
+            log.debug("Checking for implication: $mappedNewPredicateState and ${state.predicateState} results in no implication $result")
             val unionState = merge(state, newState, objMap, fieldMapping, mappedNewPredicateState)
             allStates.add(newState)
             allStates.add(unionState)
