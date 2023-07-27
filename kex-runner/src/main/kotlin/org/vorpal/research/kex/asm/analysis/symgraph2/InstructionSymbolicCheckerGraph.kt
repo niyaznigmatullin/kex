@@ -4,19 +4,27 @@ import kotlinx.collections.immutable.PersistentMap
 import kotlinx.coroutines.*
 import org.vorpal.research.kex.ExecutionContext
 import org.vorpal.research.kex.asm.analysis.symbolic.*
-import org.vorpal.research.kex.asm.analysis.symgraph2.StacktracePathSelector
-import org.vorpal.research.kex.asm.analysis.util.checkAsyncByPredicates
+import org.vorpal.research.kex.asm.analysis.symgraph2.objects.GraphVertex
 import org.vorpal.research.kex.compile.CompilationException
 import org.vorpal.research.kex.config.kexConfig
+import org.vorpal.research.kex.descriptor.ConstantDescriptor
 import org.vorpal.research.kex.descriptor.Descriptor
+import org.vorpal.research.kex.ktype.KexPointer
 import org.vorpal.research.kex.parameters.Parameters
 import org.vorpal.research.kex.reanimator.SymGraphGenerator
 import org.vorpal.research.kex.reanimator.UnsafeGenerator
 import org.vorpal.research.kex.reanimator.codegen.klassName
+import org.vorpal.research.kex.smt.AsyncChecker
+import org.vorpal.research.kex.smt.InitialDescriptorReanimator
+import org.vorpal.research.kex.smt.Result
 import org.vorpal.research.kex.state.BasicState
 import org.vorpal.research.kex.state.predicate.Predicate
 import org.vorpal.research.kex.state.predicate.path
+import org.vorpal.research.kex.state.term.ArgumentTerm
 import org.vorpal.research.kex.state.term.Term
+import org.vorpal.research.kex.state.term.ValueTerm
+import org.vorpal.research.kex.state.transformer.DescriptorGenerator
+import org.vorpal.research.kex.state.transformer.generateInitialDescriptors
 import org.vorpal.research.kex.util.newFixedThreadPoolContextWithMDC
 import org.vorpal.research.kfg.ir.BasicBlock
 import org.vorpal.research.kfg.ir.Method
@@ -38,7 +46,7 @@ class InstructionSymbolicCheckerGraph(
     override val invokeDynamicResolver: SymbolicInvokeDynamicResolver = DefaultCallResolver(ctx)
     private val tests = mutableListOf<ReportedTest>()
 
-    private data class ReportedTest(val parameters: Parameters<Descriptor>, val testPostfix: String)
+    private data class ReportedTest(val parameters: GraphTestCase, val testPostfix: String)
 
     companion object {
         @ExperimentalTime
@@ -52,7 +60,8 @@ class InstructionSymbolicCheckerGraph(
             val graphBuilder = GraphBuilder(context, targets.flatMap { method ->
                 buildList {
                     add(method.klass)
-                    addAll(method.argTypes.filterIsInstance<ClassType>().map { it.klass }.filter { it.pkg.canonicalName == method.klass.pkg.canonicalName })
+                    addAll(method.argTypes.filterIsInstance<ClassType>().map { it.klass }
+                        .filter { it.pkg.canonicalName == method.klass.pkg.canonicalName })
 //                    addAll(context.cm.getAllSubtypesOf(method.klass))
 //                    addAll(method.argTypes.flatMap {
 //                        when (it) {
@@ -96,7 +105,7 @@ class InstructionSymbolicCheckerGraph(
             rootMethod,
             rootMethod.klassName + testPostfix + testIndex.getAndIncrement()
         )
-        generator.generate(parameters)
+        generator.generate(parameters.descriptors)
         val testFile = if (generatorGraph.generate(parameters)) {
 //            generator.emit()
             generatorGraph.emit()
@@ -110,44 +119,38 @@ class InstructionSymbolicCheckerGraph(
         }
     }
 
-    private suspend fun findDescriptors(traverserState: TraverserState): Parameters<Descriptor>? {
-        val graphSymbolicStates = graphBuilder.allSymbolicStates
-        val arguments = buildList {
-            for ((index, type) in rootMethod.argTypes.withIndex()) {
-                add(arg(type.symbolicType, index))
-            }
-        }
-        val thisTerm = if (!rootMethod.isStatic && !rootMethod.isConstructor) {
-            `this`(rootMethod.klass.symbolicClass)
-        } else {
-            null
-        }
+    private suspend fun findParameters(traverserState: TraverserState): GraphTestCase? {
+        val (argTerms, thisTerm) = rootMethod.generateArgumentTerms()
         val currentPredicateState = with(traverserState.symbolicState) {
             clauses.asState() + path.asState()
         }
 
-        for (graphState in graphSymbolicStates) {
-            val graphSymbolicState = graphState.predicateState
+        for (graphState in graphBuilder.allSymbolicStates) {
             for (absCall in graphBuilder.getAbstractCalls(graphState.heapState, rootMethod)) {
                 val predicates = mutableListOf<Predicate>()
                 if (thisTerm != null) {
                     val mappedThis = graphState.objectMapping.getValue(absCall.thisArg)
                     predicates.add(path { (thisTerm eq mappedThis) equality const(true) })
                 }
-                for ((argTerm, mappedArg) in arguments.zip(absCall.arguments)) {
+                for ((argTerm, mappedArg) in argTerms.zip(absCall.arguments)) {
                     if (mappedArg is ObjectArgument) {
                         val mappedTerm = graphState.objectMapping.getValue(mappedArg.obj)
                         predicates.add(path { (argTerm eq mappedTerm) equality const(true) })
                     }
                 }
-                val mappedSymbolicState = graphSymbolicState + BasicState(predicates) + currentPredicateState
-                log.debug("Exc/Return Instruction check state for method: $rootMethod: $mappedSymbolicState with graph state ${
-                    graphState.heapState.toString(
-                        emptyMap()
-                    )
-                }")
-                val (result, changedState) = rootMethod.checkAsyncByPredicates(ctx, mappedSymbolicState)
-                if (result != null) {
+                val mappedSymbolicState = graphState.predicateState + BasicState(predicates) + currentPredicateState
+                log.debug(
+                    "Exc/Return Instruction check state for method: $rootMethod: $mappedSymbolicState with graph state ${
+                        graphState.heapState.toString(
+                            emptyMap()
+                        )
+                    }"
+                )
+                val checker = AsyncChecker(rootMethod, ctx)
+                val result = checker.prepareAndCheck(rootMethod, mappedSymbolicState)
+                val changedState = checker.state
+                check(result.known)
+                if (result is Result.SatResult) {
                     log.debug(
                         "Exc/Return Instruction add for method: $rootMethod: $mappedSymbolicState, changedState = $changedState with result $result with graph state ${
                             graphState.heapState.toString(
@@ -155,17 +158,58 @@ class InstructionSymbolicCheckerGraph(
                             )
                         }"
                     )
-                    return result
+                    val generator = DescriptorGenerator(
+                        rootMethod,
+                        ctx,
+                        result.model,
+                        InitialDescriptorReanimator(result.model, ctx)
+                    )
+                    generator.apply(changedState)
+                    val reverseObjectMapping = graphState.objectMapping.map { it.value to it.key }.toMap()
+                    val thisParameter = absCall.thisArg.let {
+                        when (it) {
+                            GraphVertex.Null -> null
+                            else -> ObjectArgument(it)
+                        }
+                    }
+                    val argParameter = absCall.arguments.zip(argTerms).map { (arg, argTerm) ->
+                        when (arg) {
+                            is ObjectArgument -> arg
+                            else -> PrimitiveArgument(argTerm)
+                        }
+                    }
+                    val parameters = Parameters(thisParameter, argParameter)
+                    val termValues = generator.memory
+                        .filterKeys { it.type !is KexPointer }
+                        .mapValues { it.value as ConstantDescriptor }
+                    val descriptors = generateInitialDescriptors(rootMethod, ctx, result.model, changedState)
+                    return GraphTestCase(parameters, graphState.heapState, termValues, descriptors)
                 } else {
-                    log.debug("Exc/Return Instruction can't see for method: $rootMethod: $mappedSymbolicState, changedState = $changedState with graph state ${
-                        graphState.heapState.toString(
-                            emptyMap()
-                        )
-                    }")
+                    log.debug(
+                        "Exc/Return Instruction can't see for method: $rootMethod: $mappedSymbolicState, changedState = $changedState with graph state ${
+                            graphState.heapState.toString(
+                                emptyMap()
+                            )
+                        }"
+                    )
                 }
             }
         }
         return null
+    }
+
+    private fun Method.generateArgumentTerms(): Pair<List<ArgumentTerm>, ValueTerm?> {
+        val arguments = buildList {
+            for ((index, type) in argTypes.withIndex()) {
+                add(arg(type.symbolicType, index))
+            }
+        }
+        val thisTerm = if (!isStatic && !isConstructor) {
+            `this`(klass.symbolicClass)
+        } else {
+            null
+        }
+        return Pair(arguments, thisTerm)
     }
 
     override suspend fun traverseReturnInst(inst: ReturnInst) {
@@ -175,9 +219,9 @@ class InstructionSymbolicCheckerGraph(
         val receiver = stackTraceElement?.instruction
         if (receiver == null) {
             log.debug("Return Instruction for method: $rootMethod")
-            val result = findDescriptors(traverserState)
+            val result = findParameters(traverserState)
             if (result != null) {
-                report(inst, result, "sh")
+                reportGraphTest(result, "sh")
             }
             currentState = null
 //            super.traverseReturnInst(inst)
@@ -204,9 +248,9 @@ class InstructionSymbolicCheckerGraph(
             null
         }
         if (catchFrame == null) {
-            val result = findDescriptors(state)
+            val result = findParameters(state)
             if (result != null) {
-                report(inst, result, "_throw_${throwableType.toString().replace("[/$.]".toRegex(), "_")}")
+                reportGraphTest(result, "_throw_${throwableType.toString().replace("[/$.]".toRegex(), "_")}")
             }
         } else {
             super.throwExceptionAndReport(state, parameters, inst, throwable)
@@ -214,9 +258,8 @@ class InstructionSymbolicCheckerGraph(
     }
 
 
-    override fun report(
-        inst: Instruction,
-        parameters: Parameters<Descriptor>,
+    fun reportGraphTest(
+        parameters: GraphTestCase,
         testPostfix: String
     ): Boolean {
         tests.add(ReportedTest(parameters, testPostfix))

@@ -5,9 +5,7 @@ import org.vorpal.research.kex.asm.analysis.symgraph2.objects.GraphObject
 import org.vorpal.research.kex.asm.analysis.symgraph2.objects.GraphVertex
 import org.vorpal.research.kex.descriptor.ConstantDescriptor
 import org.vorpal.research.kex.descriptor.Descriptor
-import org.vorpal.research.kex.descriptor.ObjectDescriptor
 import org.vorpal.research.kex.ktype.KexClass
-import org.vorpal.research.kex.ktype.KexNull
 import org.vorpal.research.kex.reanimator.actionsequence.ActionSequence
 import org.vorpal.research.kex.smt.AsyncSMTProxySolver
 import org.vorpal.research.kex.smt.FinalDescriptorReanimator
@@ -231,36 +229,26 @@ abstract class HeapState(
     }
 
     fun toString(stateEnumeration: Map<HeapState, Int>) = buildString {
-        appendLine("[[${this@HeapState.javaClass.simpleName} #${stateEnumeration[this@HeapState]}]] #${super.hashCode().toString(16)}")
+        val hash = super.hashCode().toString(16)
+        val index = stateEnumeration[this@HeapState]
+        appendLine("[[${this@HeapState.javaClass.simpleName} #$index]] #$hash")
         appendLine(additionalToString(stateEnumeration))
         appendLine(objectGraphToString())
     }
 
     abstract fun additionalToString(stateEnumeration: Map<HeapState, Int>): String
 
-    suspend fun getMappingToConcreteOrNull(
+    suspend fun restore(
         ctx: ExecutionContext,
-        objectDescriptors: Set<ObjectDescriptor>
-    ): Pair<List<ActionSequence>, Map<ObjectDescriptor, ActionSequence>>? {
-//        log.debug("objectDescriptors.size = ${objectDescriptors.size}, activeObjects.size = ${activeObjects.size}")
-        if (objectDescriptors.size > activeObjects.size) {
-            return null
-        }
-        val concreteMapper = ConcreteMapper(ctx, objectDescriptors)
-        val mapping = concreteMapper.findMapping(emptyMap(), emptyMap()) ?: return null
-        check(mapping.terms.size == terms.size)
-        val result = restoreCalls(ctx, mapping.terms)
-        val objectGenerators = objectDescriptors.associateWith { descriptor ->
-            val graphObject = mapping.mapping.getValue(descriptor)
-            val actionSequence = result.objectGenerators.getValue(graphObject)
-            actionSequence
-        }
-        return result.rootSequence to objectGenerators
+        someTermValues: Map<Term, ConstantDescriptor>,
+    ): RestorationResult? {
+        val allTermValues = reanimateAllTerms(ctx, someTermValues) ?: return null
+        return restoreCalls(ctx, allTermValues)
     }
 
     abstract suspend fun restoreCalls(ctx: ExecutionContext, termValues: Map<Term, Descriptor>): RestorationResult
 
-    suspend fun checkPredicateState(ctx: ExecutionContext, terms: Map<Term, Descriptor>): Boolean {
+    suspend fun checkPredicateState(ctx: ExecutionContext, terms: Map<Term, Descriptor>): Result {
         var concretePredicateState = predicateState
         for ((term, desc) in terms) {
             concretePredicateState = concretePredicateState.addPredicate(state { term equality desc.term })
@@ -270,7 +258,7 @@ abstract class HeapState(
             it.isPathPossibleAsync(concretePredicateState, emptyState())
         }
         check(result.known)
-        return result is Result.SatResult
+        return result
     }
 
     class RestorationResult(
@@ -278,103 +266,17 @@ abstract class HeapState(
         val rootSequence: List<ActionSequence>
     )
 
-    class ConcreteMapping(val mapping: Map<ObjectDescriptor, GraphObject>, val terms: Map<Term, Descriptor>)
-
-    inner class ConcreteMapper(val ctx: ExecutionContext, val activeObjectDesc: Set<ObjectDescriptor>) {
-        suspend fun findMapping(
-            mapping: Map<ObjectDescriptor, GraphObject>,
-            reverseMapping: Map<GraphObject, ObjectDescriptor>
-        ): ConcreteMapping? {
-            val descriptor = activeObjectDesc.firstOrNull { !mapping.containsKey(it) }
-            log.debug("mapping = $mapping, revMapping = $reverseMapping")
-            if (descriptor == null) {
-                var concretePredicateState = predicateState
-                for ((desc, obj) in mapping) {
-                    for ((field, value) in obj.primitiveFields) {
-                        val concreteField = desc.fields[field] ?: continue
-                        concreteField as ConstantDescriptor
-                        concretePredicateState =
-                            concretePredicateState.addPredicate(state { value equality concreteField.term })
-                        concretePredicateState += concreteField.query
-                    }
-                }
-                val result = AsyncSMTProxySolver(ctx).use {
-                    it.isPathPossibleAsync(concretePredicateState, emptyState())
-                }
-                log.debug("Checking concrete mapping, result: ${result.javaClass.simpleName}")
-                if (result !is Result.SatResult) {
-                    return null
-                }
-                val reanimator = FinalDescriptorReanimator(result.model, ctx)
-                val terms = terms.associateWith { reanimator.reanimate(it) }
-//                println("Concrete Predicate State: $concretePredicateState")
-                return ConcreteMapping(mapping, terms)
-            }
-            for (mapTo in activeObjects.filterIsInstance<GraphObject>().filter { !reverseMapping.containsKey(it) }) {
-                val newMapping = mapping.toMutableMap()
-                val newReverseMapping = reverseMapping.toMutableMap()
-                if (!tryAddMapping(newMapping, newReverseMapping, descriptor, mapTo)) {
-                    log.debug("Couldn't map $descriptor and $mapTo")
-                    continue
-                }
-                log.debug("Mapped $descriptor and $mapTo")
-                findMapping(newMapping, newReverseMapping)?.let { return it }
-            }
-            log.debug("Failed to find mapping: mapping = $mapping, revMapping = $reverseMapping")
+    suspend fun reanimateAllTerms(
+        ctx: ExecutionContext,
+        someTermValues: Map<Term, ConstantDescriptor>,
+    ): Map<Term, Descriptor>? {
+        val result = checkPredicateState(ctx, someTermValues)
+        log.debug("Checking concrete mapping, result: ${result.javaClass.simpleName}")
+        if (result !is Result.SatResult) {
             return null
         }
-
-        private fun tryAddMapping(
-            mapping: MutableMap<ObjectDescriptor, GraphObject>,
-            reverseMapping: MutableMap<GraphObject, ObjectDescriptor>,
-            desc: ObjectDescriptor,
-            mapTo: GraphObject,
-        ): Boolean {
-            log.debug("try adding mapping between $desc and $mapTo")
-            if (desc.type != mapTo.type || (desc in activeObjectDesc && mapTo !in activeObjects)) {
-                log.debug("failed adding desc.type = ${desc.type}, mapTo.type = ${mapTo.type}, desc is active = ${desc in activeObjectDesc}, mapTo is active = ${mapTo in activeObjects}")
-                return false
-            }
-            mapping[desc] = mapTo
-            reverseMapping[mapTo] = desc
-            log.debug("added to ds between $desc and $mapTo, current mapping = $mapping, revMapping = $reverseMapping")
-            for ((field, value) in desc.fields) {
-                when (field.second) {
-                    is KexNull, is KexClass -> {}
-                    else -> continue
-                }
-                if (!mapTo.objectFields.containsKey(field)) {
-                    log.debug("Not found, objectFields = ${mapTo.objectFields}")
-                }
-                val otherValue = mapTo.objectFields.getOrDefault(field, GraphVertex.Null)
-                if (value == ConstantDescriptor.Null) {
-                    if (otherValue.type !is KexNull) {
-                        log.debug("descriptor field is null, but object field is not null")
-                        return false
-                    }
-                    continue
-                }
-                if (otherValue.type is KexNull) {
-                    log.debug("object field is null, but descriptor field is $value")
-                    return false
-                }
-                value as ObjectDescriptor
-                otherValue as GraphObject
-                val map1 = mapping[value]
-                val map2 = reverseMapping[otherValue]
-                if (map1 == null && map2 == null) {
-                    log.debug("recursively mapping $value and $otherValue")
-                    if (!tryAddMapping(mapping, reverseMapping, value, otherValue)) {
-                        log.debug("Couldn't map $value and $otherValue")
-                        return false
-                    }
-                    log.debug("Mapped $value and $otherValue")
-                } else if (map1 != otherValue && map2 != value) {
-                    log.debug("Existing mapping for $value and $otherValue is incorrect")
-                    return false
-                }
-            }
-            return true
-        }
+        val reanimator = FinalDescriptorReanimator(result.model, ctx)
+        val allTermValues = terms.associateWith { reanimator.reanimate(it) }
+        return allTermValues
     }
 }
