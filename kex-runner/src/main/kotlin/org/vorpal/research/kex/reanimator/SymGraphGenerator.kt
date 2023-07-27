@@ -1,12 +1,8 @@
 package org.vorpal.research.kex.reanimator
 
 import org.vorpal.research.kex.ExecutionContext
-import org.vorpal.research.kex.asm.analysis.symgraph2.GraphBuilder
-import org.vorpal.research.kex.asm.analysis.symgraph2.SymGraphTestCasePrinter
+import org.vorpal.research.kex.asm.analysis.symgraph2.*
 import org.vorpal.research.kex.asm.state.PredicateStateAnalysis
-import org.vorpal.research.kex.descriptor.Descriptor
-import org.vorpal.research.kex.descriptor.ObjectDescriptor
-import org.vorpal.research.kex.ktype.KexClass
 import org.vorpal.research.kex.parameters.Parameters
 import org.vorpal.research.kex.reanimator.actionsequence.ActionSequence
 import org.vorpal.research.kex.reanimator.actionsequence.generator.ConstantGenerator
@@ -14,8 +10,8 @@ import org.vorpal.research.kex.reanimator.actionsequence.generator.GeneratorCont
 import org.vorpal.research.kex.reanimator.codegen.packageName
 import org.vorpal.research.kex.smt.SMTModel
 import org.vorpal.research.kex.state.PredicateState
-import org.vorpal.research.kfg.ir.Class
 import org.vorpal.research.kfg.ir.Method
+import org.vorpal.research.kthelper.assert.unreachable
 import org.vorpal.research.kthelper.logging.log
 import java.nio.file.Path
 
@@ -28,13 +24,11 @@ class SymGraphGenerator(
 
     private val constGenerator = ConstantGenerator(GeneratorContext(ctx, PredicateStateAnalysis(ctx.cm)))
 
-    //    private val printer = ExecutorTestCasePrinter(ctx, method.packageName, testName)
     private val printer = SymGraphTestCasePrinter(ctx, method.packageName, testName)
-//    val testKlassName = printer.fullKlassName
 
-    suspend fun generate(descriptors: Parameters<Descriptor>): Boolean {
-        log.debug("Descriptors to generate: $descriptors")
-        val (params, sequence) = getActionSequences(descriptors) ?: return false
+    suspend fun generate(testCase: GraphTestCase): Boolean {
+        log.debug("HeapState to generate: ${testCase.heapState}")
+        val (params, sequence) = getActionSequences(testCase) ?: return false
         printer.print(method, params, sequence)
         return true
     }
@@ -48,25 +42,27 @@ class SymGraphGenerator(
         return printer.targetFile.toPath()
     }
 
-    suspend fun getActionSequences(descriptors: Parameters<Descriptor>): Pair<Parameters<ActionSequence>, List<ActionSequence>>? {
-        val objectDescriptors = buildSet {
-            with(descriptors) {
-                addAll(arguments.filter { it.type is KexClass }.map { it as ObjectDescriptor })
-                instance?.let { add(it as ObjectDescriptor) }
-            }
-        }
-        val result = graphBuilder.restoreActionSequences(objectDescriptors)
+    private suspend fun getActionSequences(testCase: GraphTestCase): Pair<Parameters<ActionSequence>, List<ActionSequence>>? {
+        val result = testCase.heapState.restore(ctx, testCase.termValues)
         log.debug("getActionSequences: call restoreActionSequences, result = $result")
-        val (rootSequence, mapping) = result ?: return null
-        val instance = descriptors.instance?.let { mapping.getValue(it as ObjectDescriptor) }
-        val arguments = descriptors.arguments.map {
-            when (it) {
-                is ObjectDescriptor -> mapping.getValue(it)
+        if (result == null) {
+            return null
+        }
+        val instance = testCase.parameters.instance?.let {
+            it as ObjectArgument
+            result.objectGenerators.getValue(it.obj)
+        }
 
-                else -> constGenerator.generate(it)
+        val arguments = testCase.parameters.arguments.map {
+            when (it) {
+                is ObjectArgument -> result.objectGenerators.getValue(it.obj)
+
+                is PrimitiveArgument -> constGenerator.generate(testCase.termValues.getValue(it.term))
+
+                else -> unreachable { log.debug("NoneArgument in restore") }
             }
         }
-        return Parameters(instance, arguments) to rootSequence
+        return Parameters(instance, arguments) to result.rootSequence
     }
 
 

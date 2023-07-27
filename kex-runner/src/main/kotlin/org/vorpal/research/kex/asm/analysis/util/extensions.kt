@@ -81,27 +81,6 @@ suspend fun Method.checkAsync(
     }
 }
 
-suspend fun Method.checkAsyncByPredicates(ctx: ExecutionContext, predicates: PredicateState): Pair<Parameters<Descriptor>?, PredicateState> {
-    val checker = AsyncChecker(this, ctx)
-    val result = checker.prepareAndCheck(this, predicates)
-    val state = checker.state
-    if (result !is Result.SatResult) {
-        return null to state
-    }
-
-    return try {
-        generateInitialDescriptors(this, ctx, result.model, checker.state)
-            .concreteParameters(ctx.cm, ctx.accessLevel, ctx.random).also {
-                log.debug { "Generated params:\n$it" }
-            }
-            .filterStaticFinals(ctx.cm)
-            .filterIgnoredStatic()
-    } catch (e: Throwable) {
-        log.error("Error during descriptor generation: ", e)
-        null
-    } to state
-}
-
 @Suppress("unused")
 suspend fun Method.checkAsyncAndSlice(
     ctx: ExecutionContext,

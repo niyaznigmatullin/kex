@@ -270,26 +270,6 @@ class GraphBuilder(val ctx: ExecutionContext, klasses: Set<Class>) : TermBuilder
         log.debug("End building graph")
     }
 
-    suspend fun restoreActionSequences(objectDescriptors: Set<ObjectDescriptor>): Pair<List<ActionSequence>, Map<ObjectDescriptor, ActionSequence>>? {
-        for (state in allStates) {
-            val result = state.getMappingToConcreteOrNull(ctx, objectDescriptors)
-            if (result != null) {
-                return result
-            }
-        }
-        return null
-//        val mapping = result.mapping
-//        val stateEnumeration = allStates.withIndex().associate { (index, state) -> state to index }
-//        return buildString {
-//            appendLine("Found mapping")
-//            appendLine(state.toString(stateEnumeration))
-//            appendLine(objectDescriptors)
-//            appendLine(mapping.mapping.mapKeys { it.key.term }.mapValues { state.getObjectIndex(it.value) })
-//            appendLine(mapping.terms)
-//            appendLine(result.callList)
-//        }
-    }
-
     private fun HeapState.buildSymbolicState(): HeapSymbolicState {
         val objectTerms = buildMap {
             for (v in objects) {

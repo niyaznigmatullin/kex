@@ -17,22 +17,6 @@ import kotlin.time.ExperimentalTime
 @InternalSerializationApi
 @DelicateCoroutinesApi
 class RBTreeTest : GraphBuildingTest("graph-rbtree") {
-    @Test
-    @Ignore
-    fun testRedBlackTree() {
-        val builder = buildGraph(setOf(cm["org/vorpal/research/kex/test/symgraph/rbtree/TreeMap"]), 3)
-        val mapClass = cm["org/vorpal/research/kex/test/symgraph/rbtree/TreeMap"].kexType
-        val entryClass = cm["org/vorpal/research/kex/test/symgraph/rbtree/TreeMap\$Entry"].kexType
-        val descriptorMap = ObjectDescriptor(mapClass)
-        val descriptorOtherMap = ObjectDescriptor(mapClass)
-        val root = ObjectDescriptor(entryClass)
-        descriptorMap.fields["root" to entryClass] = root
-        root.fields["value" to cm["java/lang/Object"].kexType] = descriptorOtherMap
-        val restored = runBlocking {
-            builder.restoreActionSequences(setOf(descriptorMap))
-        }
-        assert(restored != null)
-    }
 
     @Test
     @Ignore

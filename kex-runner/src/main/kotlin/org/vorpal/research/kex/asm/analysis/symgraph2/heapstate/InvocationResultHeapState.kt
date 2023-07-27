@@ -8,6 +8,7 @@ import org.vorpal.research.kex.descriptor.Descriptor
 import org.vorpal.research.kex.reanimator.actionsequence.*
 import org.vorpal.research.kex.reanimator.actionsequence.generator.ConstantGenerator
 import org.vorpal.research.kex.reanimator.actionsequence.generator.GeneratorContext
+import org.vorpal.research.kex.smt.Result
 import org.vorpal.research.kex.state.PredicateState
 import org.vorpal.research.kex.state.term.Term
 import org.vorpal.research.kthelper.assert.unreachable
@@ -35,7 +36,7 @@ class InvocationResultHeapState(
     override suspend fun restoreCalls(ctx: ExecutionContext, termValues: Map<Term, Descriptor>): RestorationResult {
         val actionSequenceGenerator = ConstantGenerator(GeneratorContext(ctx, PredicateStateAnalysis(ctx.cm)))
 //        log.debug("terms: $termValues and $terms")
-        check(checkPredicateState(ctx, termValues))
+        check(checkPredicateState(ctx, termValues) is Result.SatResult)
         val parentTermVals = termMappingToParent.map { it.value to termValues.getValue(it.key) }.toMap()
             .filterKeys { parentState.terms.contains(it) }
 //        log.debug("parent terms: $parentTermVals")
