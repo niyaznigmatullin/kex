@@ -131,7 +131,7 @@ class SymbolicKexTool : Tool {
         val klass = context.cm[canonicalName]
         log.debug("Running on klass $klass")
         try {
-            InstructionSymbolicCheckerGraph.run(context, klass.allMethods.filter { !it.isPrivate }.toSet())
+            InstructionSymbolicCheckerGraph.run(context, klass.allMethods.filter { !it.isPrivate && !it.isConstructor }.toSet())
         } catch (e: Throwable) {
             log.error("Error: ", e)
         }
