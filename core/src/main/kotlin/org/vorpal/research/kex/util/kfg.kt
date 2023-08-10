@@ -26,6 +26,7 @@ import org.vorpal.research.kfg.type.longWrapper
 import org.vorpal.research.kfg.type.parseStringToType
 import org.vorpal.research.kfg.type.shortWrapper
 import org.vorpal.research.kthelper.assert.unreachable
+import org.vorpal.research.kthelper.collection.LRUCache
 import org.vorpal.research.kthelper.compareTo
 import org.vorpal.research.kthelper.logging.log
 
@@ -144,3 +145,15 @@ val String.javaString get() = replace(Package.SEPARATOR, Package.CANONICAL_SEPAR
 
 fun Class.getCtor(vararg argTypes: Type) =
     getMethod("<init>", cm.type.voidType, *argTypes)
+
+private object SubTypeInfoCache {
+    private val subtypeCache = LRUCache<Pair<String, String>, Boolean>(100_000U)
+    fun check(lhv: Type, rhv: Type): Boolean {
+        val key = lhv.toString() to rhv.toString()
+        return subtypeCache[key] ?: lhv.isSubtypeOf(rhv).also {
+            subtypeCache[key] = it
+        }
+    }
+}
+
+fun Type.isSubtypeOfCached(other: Type): Boolean = SubTypeInfoCache.check(this, other)
