@@ -1,4 +1,4 @@
-#!/bin/python
+#!/bin/python3
 
 import subprocess
 import typing
@@ -43,7 +43,6 @@ def get_jvm_args() -> list [str]:
 def run_kex(args: list [str]):
 	command = ["java",
 		"-Xmx{}".format(HEAP_MEMORY_SIZE),
-		"-Xss{}".format(STACK_MEMORY_SIZE),
 		"-Djava.security.manager",
 		"-Djava.security.policy==kex.policy",
 		"-Dlogback.statusListenerClass=ch.qos.logback.core.status.NopStatusListener"
