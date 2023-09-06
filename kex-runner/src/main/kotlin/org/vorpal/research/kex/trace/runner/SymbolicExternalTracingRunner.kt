@@ -1,24 +1,23 @@
 package org.vorpal.research.kex.trace.runner
 
-import kotlinx.coroutines.yield
+import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.InternalSerializationApi
 import org.vorpal.research.kex.ExecutionContext
 import org.vorpal.research.kex.config.kexConfig
-import org.vorpal.research.kex.serialization.KexSerializer
 import org.vorpal.research.kex.trace.symbolic.protocol.Client2MasterConnection
-import org.vorpal.research.kex.trace.symbolic.protocol.Client2MasterSocketConnection
+import org.vorpal.research.kex.trace.symbolic.protocol.ControllerProtocolHandler
+import org.vorpal.research.kex.trace.symbolic.protocol.ControllerProtocolSocketHandler
 import org.vorpal.research.kex.trace.symbolic.protocol.ExecutionCompletedResult
 import org.vorpal.research.kex.trace.symbolic.protocol.ExecutionResult
+import org.vorpal.research.kex.trace.symbolic.protocol.ExecutionTimedOutResult
 import org.vorpal.research.kex.trace.symbolic.protocol.TestExecutionRequest
 import org.vorpal.research.kex.util.getIntrinsics
 import org.vorpal.research.kex.util.getJunit
 import org.vorpal.research.kex.util.getJvmModuleParams
 import org.vorpal.research.kex.util.getPathSeparator
 import org.vorpal.research.kex.util.outputDirectory
-import org.vorpal.research.kfg.ClassManager
 import org.vorpal.research.kthelper.logging.log
-import java.net.ServerSocket
 import java.nio.file.Paths
 import kotlin.concurrent.thread
 
@@ -26,21 +25,16 @@ import kotlin.concurrent.thread
 @InternalSerializationApi
 internal object ExecutorMasterController : AutoCloseable {
     private lateinit var process: Process
-    private val masterPort: Int
-    private val serializers = mutableMapOf<ClassManager, KexSerializer>()
+    private lateinit var controllerSocket: ControllerProtocolHandler
 
     init {
-        val tempSocket = ServerSocket(0)
-        masterPort = tempSocket.localPort
-        tempSocket.close()
-        // this is fucked up
-        Thread.sleep(2000)
         Runtime.getRuntime().addShutdownHook(thread(start = false) {
-            if (process.isAlive) process.destroy()
+            if (::process.isInitialized && process.isAlive) process.destroy()
         })
     }
 
     fun start(ctx: ExecutionContext) {
+        controllerSocket = ControllerProtocolSocketHandler(ctx)
         val outputDir = kexConfig.outputDirectory
         val executorPath = kexConfig.getPathValue("executor", "executorPath") {
             Paths.get("kex-executor/target/kex-executor-0.0.1-jar-with-dependencies.jar")
@@ -79,50 +73,52 @@ internal object ExecutorMasterController : AutoCloseable {
             executorKlass,
             "--output", "${outputDir.toAbsolutePath()}",
             "--config", "$executorConfigPath",
-            "--port", "$masterPort",
+            "--port", "${controllerSocket.controllerPort}",
             "--kfgClassPath", kfgClassPath.joinToString(getPathSeparator()),
             "--workerClassPath", workerClassPath.joinToString(getPathSeparator()),
             "--numOfWorkers", "$numberOfWorkers"
         )
         log.debug("Starting executor master process with command: '${pb.command().joinToString(" ")}'")
         process = pb.start()
-        Thread.sleep(1000)
+        runBlocking {
+            controllerSocket.init()
+        }
     }
 
-    fun getClientConnection(ctx: ExecutionContext): Client2MasterConnection {
-        return Client2MasterSocketConnection(serializers.getOrPut(ctx.cm) {
-            KexSerializer(
-                ctx.cm,
-                prettyPrint = false
-            )
-        }, masterPort)
+    suspend fun getClientConnection(): Client2MasterConnection? {
+        return controllerSocket.getClient2MasterConnection()
     }
 
     override fun close() {
         process.destroy()
+        controllerSocket.close()
     }
 }
 
 class SymbolicExternalTracingRunner(val ctx: ExecutionContext) {
-
     @ExperimentalSerializationApi
     @InternalSerializationApi
     suspend fun run(klass: String, setup: String, test: String): ExecutionResult {
         log.debug("Executing test $klass")
 
-        val connection = ExecutorMasterController.getClientConnection(ctx)
+        val connection = ExecutorMasterController.getClientConnection()
+        if (connection == null) {
+            log.debug("Test $klass executed with result connection timeout")
+            return ExecutionTimedOutResult("Connection timeout")
+        }
         connection.use {
-            it.connect()
-            it.send(TestExecutionRequest(klass, test, setup))
-            while (!it.ready()) {
-                yield()
+            if (!it.send(TestExecutionRequest(klass, test, setup))) {
+                log.debug("Test $klass executed with result connection timeout")
+                return ExecutionTimedOutResult("Connection timeout")
             }
             val result = it.receive()
             when (result) {
+                null -> log.debug("Connection timeout")
                 is ExecutionCompletedResult -> log.debug("Execution result: {}", result.trace)
                 else -> log.debug("Execution result: {}", result)
             }
-            return result
+            log.debug("Test {} executed with result {}", klass, result)
+            return result ?: ExecutionTimedOutResult("Connection timeout")
         }
     }
 }

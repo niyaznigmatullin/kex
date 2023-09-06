@@ -1,122 +1,209 @@
 package org.vorpal.research.kex.trace.symbolic.protocol
 
+import io.ktor.network.selector.*
+import io.ktor.network.sockets.*
+import io.ktor.util.network.*
+import io.ktor.utils.io.*
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.InternalSerializationApi
+import org.vorpal.research.kex.ExecutionContext
+import org.vorpal.research.kex.config.kexConfig
 import org.vorpal.research.kex.serialization.KexSerializer
+import org.vorpal.research.kfg.ClassManager
 import org.vorpal.research.kthelper.logging.log
-import java.io.BufferedReader
-import java.io.BufferedWriter
-import java.net.ServerSocket
-import java.net.Socket
-import kotlin.time.Duration
+import kotlin.time.Duration.Companion.seconds
 
-interface MasterProtocolHandler {
+interface ControllerProtocolHandler : AutoCloseable {
+    val controllerPort: Int
+    val masterPort: Int
+
+    suspend fun init(): Boolean
+
+    suspend fun getClient2MasterConnection(): Client2MasterConnection?
+}
+
+interface MasterProtocolHandler : AutoCloseable {
+    val controllerPort: Int
     val clientPort: Int
     val workerPort: Int
 
-    fun receiveClientConnection(): Master2ClientConnection
-    fun receiveWorkerConnection(timeout: Duration): Master2WorkerConnection
+    suspend fun receiveClientConnection(): Master2ClientConnection?
+    suspend fun receiveWorkerConnection(): Master2WorkerConnection?
 }
 
 
 interface Master2ClientConnection : AutoCloseable {
-    fun ready(): Boolean
-    fun receive(): String
-    fun send(result: String)
+    suspend fun ready(): Boolean
+    suspend fun receive(): String?
+    suspend fun send(result: String): Boolean
 }
 
 interface Master2WorkerConnection : AutoCloseable {
-    fun ready(): Boolean
-    fun send(request: String)
-    fun receive(): String
+    suspend fun ready(): Boolean
+    suspend fun send(request: String): Boolean
+    suspend fun receive(): String?
 }
 
 interface Client2MasterConnection : AutoCloseable {
-    fun connect(): Boolean
-    fun ready(): Boolean
-    fun send(request: TestExecutionRequest)
-    fun receive(): ExecutionResult
+    suspend fun ready(): Boolean
+    suspend fun send(request: TestExecutionRequest): Boolean
+    suspend fun receive(): ExecutionResult?
 }
 
 interface Worker2MasterConnection : AutoCloseable {
-    fun connect(): Boolean
-    fun ready(): Boolean
-    fun receive(): TestExecutionRequest
-    fun send(result: ExecutionResult)
+    suspend fun connect(): Boolean
+    suspend fun ready(): Boolean
+    suspend fun receive(): TestExecutionRequest?
+    suspend fun send(result: ExecutionResult): Boolean
 }
 
 // Impl
 
+private val connectionTimeout = kexConfig.getIntValue("executor", "connectionTimeout", 100).seconds
+private val communicationTimeout = kexConfig.getIntValue("executor", "communicationTimeout", 100).seconds
+
+@ExperimentalSerializationApi
+@InternalSerializationApi
+class ControllerProtocolSocketHandler(val ctx: ExecutionContext) : ControllerProtocolHandler {
+    private val selectorManager = SelectorManager(Dispatchers.IO)
+    private val controllerSocket = aSocket(selectorManager).tcp().bind()
+    private val serializers = mutableMapOf<ClassManager, KexSerializer>()
+    private lateinit var masterConnection: Socket
+    override val controllerPort: Int
+        get() = controllerSocket.localAddress.toJavaAddress().port
+    override var masterPort: Int = 0
+        private set
+
+    override suspend fun init(): Boolean = withTimeoutOrNull(connectionTimeout) {
+        log.debug("Controller is waiting for command from master")
+        val serializer = serializers.getOrPut(ctx.cm) {
+            KexSerializer(
+                ctx.cm,
+                prettyPrint = false
+            )
+        }
+        masterConnection = controllerSocket.accept()
+        val command = masterConnection.openReadChannel().readUTF8Line()!!
+        masterPort = serializer.fromJson<PortCommand>(command).port
+        log.debug("Controller received master port $masterPort")
+        true
+    } ?: false
+
+    override suspend fun getClient2MasterConnection(): Client2MasterConnection? =
+        withTimeoutOrNull(connectionTimeout) {
+            val serializer = serializers.getOrPut(ctx.cm) {
+                KexSerializer(
+                    ctx.cm,
+                    prettyPrint = false
+                )
+            }
+            val socket = aSocket(selectorManager).tcp().connect("localhost", masterPort)
+            log.debug("Client {} connected to master {}", socket.localAddress, socket.remoteAddress)
+            Client2MasterSocketConnection(serializer, socket)
+        }
+
+    override fun close() {
+        controllerSocket.close()
+        masterConnection.close()
+        serializers.clear()
+    }
+}
+
+
 class MasterProtocolSocketHandler(
-    clientPort: Int
+    override val controllerPort: Int
 ) : MasterProtocolHandler {
-    private val clientListener = ServerSocket(clientPort)
-    private val workerListener = ServerSocket(0)
+    private val selectorManager = SelectorManager(Dispatchers.IO)
+    private val clientListener = aSocket(selectorManager).tcp().bind()
+    private val workerListener = aSocket(selectorManager).tcp().bind()
+    private var controllerConnection: Socket
 
-    override val clientPort get() = clientListener.localPort
-    override val workerPort get() = workerListener.localPort
+    override val clientPort get() = clientListener.localAddress.toJavaAddress().port
+    override val workerPort get() = workerListener.localAddress.toJavaAddress().port
 
-    override fun receiveClientConnection(): Master2ClientConnection {
-        val socket = clientListener.accept()
-        return Master2ClientSocketConnection(socket)
+    init {
+        runBlocking {
+            log.debug("Master is connecting to controller")
+            controllerConnection = aSocket(selectorManager).tcp().connect("localhost", controllerPort)
+            val channel = controllerConnection.openWriteChannel()
+            log.debug("Master sent command \"{\"port\":$clientPort}\" to controller")
+            channel.writeStringUtf8("{\"port\":$clientPort}\n")
+            channel.close()
+        }
     }
 
-    override fun receiveWorkerConnection(timeout: Duration): Master2WorkerConnection {
+    override suspend fun receiveClientConnection(): Master2ClientConnection? = withTimeoutOrNull(connectionTimeout) {
+        val socket = clientListener.accept()
+        log.debug("Client {} connected to master {}", socket.remoteAddress, socket.localAddress)
+        Master2ClientSocketConnection(socket)
+    }
+
+    override suspend fun receiveWorkerConnection(): Master2WorkerConnection? = withTimeoutOrNull(connectionTimeout) {
         val socket = workerListener.accept()
-        socket.soTimeout = timeout.inWholeMilliseconds.toInt()
-        return Master2WorkerSocketConnection(socket)
+        Master2WorkerSocketConnection(socket)
+    }
+
+    override fun close() {
+        controllerConnection.close()
+        clientListener.close()
+        workerListener.close()
     }
 }
 
 class Master2ClientSocketConnection(private val socket: Socket) : Master2ClientConnection {
-    private val writer: BufferedWriter = socket.getOutputStream().bufferedWriter()
-    private val reader: BufferedReader = socket.getInputStream().bufferedReader()
+    private val writer = socket.openWriteChannel(autoFlush = true)
+    private val reader = socket.openReadChannel()
 
-    override fun ready(): Boolean {
-        return reader.ready()
+    override suspend fun ready(): Boolean {
+        return reader.availableForRead > 0
     }
 
-    override fun receive(): String {
-        return reader.readLine().also {
+    override suspend fun receive(): String? = withTimeoutOrNull(communicationTimeout) {
+        log.debug("Receiving a message from {} to {}", socket.remoteAddress, socket.localAddress)
+        reader.readUTF8Line().also {
             log.debug("Master received a request $it")
         }
     }
 
-    override fun send(result: String) {
-        log.debug("Master sends a response")
-        writer.write(result)
-        writer.newLine()
-    }
+    override suspend fun send(result: String): Boolean = withTimeoutOrNull(communicationTimeout) {
+        log.debug("Master sends a response of size ${result.length}")
+        try {
+            writer.writeStringUtf8(result + "\n")
+        } catch (e: Throwable) {
+            log.error("Master received exception $e")
+        }
+        true
+    } ?: false
 
     override fun close() {
         writer.close()
-        reader.close()
         socket.close()
         log.debug("Master closed its connection to client")
     }
 }
 
 class Master2WorkerSocketConnection(private val socket: Socket) : Master2WorkerConnection {
-    private val writer: BufferedWriter = socket.getOutputStream().bufferedWriter()
-    private val reader: BufferedReader = socket.getInputStream().bufferedReader()
+    private val writer = socket.openWriteChannel(autoFlush = true)
+    private val reader = socket.openReadChannel()
 
-    override fun send(request: String) {
-        writer.write(request)
-        writer.newLine()
-        writer.flush()
+    override suspend fun send(request: String): Boolean = withTimeoutOrNull(communicationTimeout) {
+        writer.writeStringUtf8(request + "\n")
+        true
+    } ?: false
+
+    override suspend fun ready(): Boolean {
+        return reader.availableForRead > 0
     }
 
-    override fun ready(): Boolean {
-        return reader.ready()
-    }
-
-    override fun receive(): String {
-        return reader.readLine()
+    override suspend fun receive(): String? = withTimeoutOrNull(communicationTimeout) {
+        reader.readUTF8Line()
     }
 
     override fun close() {
         writer.close()
-        reader.close()
         socket.close()
     }
 }
@@ -125,43 +212,31 @@ class Master2WorkerSocketConnection(private val socket: Socket) : Master2WorkerC
 @InternalSerializationApi
 class Client2MasterSocketConnection(
     val serializer: KexSerializer,
-    private val port: Int
+    private val socket: Socket
 ) : Client2MasterConnection {
-    private lateinit var socket: Socket
-    private lateinit var writer: BufferedWriter
-    private lateinit var reader: BufferedReader
+    private val writer = socket.openWriteChannel(autoFlush = true)
+    private val reader = socket.openReadChannel()
 
-    override fun connect(): Boolean {
-        log.debug("Trying to connect to master at port $port")
-        socket = Socket("localhost", port)
-        writer = socket.getOutputStream().bufferedWriter()
-        reader = socket.getInputStream().bufferedReader()
-        log.debug("Connected to master")
-        return true
-    }
-
-    override fun send(request: TestExecutionRequest) {
-        log.debug("Client sending a request: {}", request)
+    override suspend fun send(request: TestExecutionRequest): Boolean = withTimeoutOrNull(communicationTimeout) {
+        log.debug("Client sending a request: {} from {} to {}", request, socket.localAddress, socket.remoteAddress)
         val json = serializer.toJson(request)
-        writer.write(json)
-        writer.newLine()
-        writer.flush()
+        writer.writeStringUtf8(json + "\n")
         log.debug("Request is sent")
+        true
+    } ?: false
+
+    override suspend fun ready(): Boolean {
+        return reader.availableForRead > 0
     }
 
-    override fun ready(): Boolean {
-        return reader.ready()
-    }
-
-    override fun receive(): ExecutionResult {
-        val json = reader.readLine()
+    override suspend fun receive(): ExecutionResult? = withTimeoutOrNull(communicationTimeout) {
+        val json = reader.readUTF8Line() ?: return@withTimeoutOrNull null
         log.debug("Client received an answer")
-        return serializer.fromJson(json)
+        serializer.fromJson(json)
     }
 
     override fun close() {
         writer.close()
-        reader.close()
         socket.close()
         log.debug("Client closed its connection")
     }
@@ -170,41 +245,43 @@ class Client2MasterSocketConnection(
 
 @ExperimentalSerializationApi
 @InternalSerializationApi
-class Worker2MasterSocketConnection(val serializer: KexSerializer, private val port: Int) : Worker2MasterConnection {
+class Worker2MasterSocketConnection(
+    val serializer: KexSerializer,
+    private val port: Int
+) : Worker2MasterConnection {
     private lateinit var socket: Socket
-    private lateinit var writer: BufferedWriter
-    private lateinit var reader: BufferedReader
+    private lateinit var writer: ByteWriteChannel
+    private lateinit var reader: ByteReadChannel
 
-    override fun connect(): Boolean {
+    override suspend fun connect(): Boolean = withTimeoutOrNull(connectionTimeout) {
         log.debug("Trying to connect to master at port $port")
-        socket = Socket("localhost", port)
-        writer = socket.getOutputStream().bufferedWriter()
-        reader = socket.getInputStream().bufferedReader()
+        socket = aSocket(SelectorManager(Dispatchers.IO)).tcp()
+            .connect("localhost", port)
+        writer = socket.openWriteChannel(autoFlush = true)
+        reader = socket.openReadChannel()
         log.debug("Connected to master")
-        return true
+        true
+    } ?: false
+
+    override suspend fun ready(): Boolean {
+        return reader.availableForRead > 0
     }
 
-    override fun ready(): Boolean {
-        return reader.ready()
-    }
-
-    override fun receive(): TestExecutionRequest {
-        val json = reader.readLine()
+    override suspend fun receive(): TestExecutionRequest? = withTimeoutOrNull(communicationTimeout) {
+        val json = reader.readUTF8Line() ?: return@withTimeoutOrNull null
         log.debug("Received request: $json")
-        return serializer.fromJson(json)
+        serializer.fromJson(json)
     }
 
-    override fun send(result: ExecutionResult) {
+    override suspend fun send(result: ExecutionResult): Boolean = withTimeoutOrNull(communicationTimeout) {
         val json = serializer.toJson(result)
         log.debug("Sending a response")
-        writer.write(json)
-        writer.newLine()
-        writer.flush()
-    }
+        writer.writeStringUtf8(json + "\n")
+        true
+    } ?: false
 
     override fun close() {
         writer.close()
-        reader.close()
         socket.close()
         log.debug("Worker closed its connection")
     }
