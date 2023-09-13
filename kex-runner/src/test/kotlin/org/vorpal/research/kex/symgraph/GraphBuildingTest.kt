@@ -33,7 +33,7 @@ abstract class GraphBuildingTest(name: String) : KexRunnerTest(name) {
             +ClassInstantiationDetector(analysisContext)
         }
 
-        val methods = klass.allMethods.filter { !it.isPrivate }.toSet()
+        val methods = klass.allMethods.filter { !it.isPrivate && !it.isConstructor && !it.isAbstract && !it.isNative }.toSet()
         InstructionSymbolicCheckerGraph.run(analysisContext, methods)
 
         val coverage = CoverageReporter(listOf(jar)).execute(klass.cm, ClassLevel(klass))

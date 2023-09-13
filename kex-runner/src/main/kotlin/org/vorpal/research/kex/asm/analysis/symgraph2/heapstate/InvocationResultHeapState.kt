@@ -7,6 +7,7 @@ import org.vorpal.research.kex.asm.state.PredicateStateAnalysis
 import org.vorpal.research.kex.descriptor.Descriptor
 import org.vorpal.research.kex.reanimator.actionsequence.*
 import org.vorpal.research.kex.reanimator.actionsequence.generator.ConstantGenerator
+import org.vorpal.research.kex.reanimator.actionsequence.generator.Generator
 import org.vorpal.research.kex.reanimator.actionsequence.generator.GeneratorContext
 import org.vorpal.research.kex.smt.Result
 import org.vorpal.research.kex.state.PredicateState
@@ -33,16 +34,21 @@ class InvocationResultHeapState(
         append(")")
     }
 
-    override suspend fun restoreCalls(ctx: ExecutionContext, termValues: Map<Term, Descriptor>): RestorationResult {
-        val actionSequenceGenerator = ConstantGenerator(GeneratorContext(ctx, PredicateStateAnalysis(ctx.cm)))
+    override suspend fun restoreCalls(
+        ctx: ExecutionContext,
+        termValues: Map<Term, Descriptor>,
+        argumentGenerator: Generator,
+    ): RestorationResult {
 //        log.debug("terms: $termValues and $terms")
         check(checkPredicateState(ctx, termValues) is Result.SatResult)
-        val parentTermVals = termMappingToParent.map { it.value to termValues.getValue(it.key) }.toMap()
-            .filterKeys { parentState.terms.contains(it) }
+        val parentTermVals = termMappingToParent
+            .filterValues { parentState.terms.contains(it) }
+            .map { it.value to termValues.getValue(it.key) }
+            .toMap()
 //        log.debug("parent terms: $parentTermVals")
-        val oldResult = parentState.restoreCalls(ctx, parentTermVals)
+        val oldResult = parentState.restoreCalls(ctx, parentTermVals, argumentGenerator)
         val oldObjActions = oldResult.objectGenerators
-        val methodCall = generateMethodCallSequence(termValues, actionSequenceGenerator, oldObjActions, "v${hashCode()}")
+        val methodCall = generateMethodCallSequence(termValues, argumentGenerator, oldObjActions, "v${hashCode()}")
         val newRootSequence = buildList {
             addAll(oldResult.rootSequence)
             add(methodCall)
@@ -58,7 +64,7 @@ class InvocationResultHeapState(
 
     private fun generateMethodCallSequence(
         termValues: Map<Term, Descriptor>,
-        actionSequenceGenerator: ConstantGenerator,
+        actionSequenceGenerator: Generator,
         oldObjActions: Map<GraphVertex, ActionSequence>,
         name: String,
     ): ActionSequence {

@@ -7,9 +7,7 @@ import org.vorpal.research.kex.asm.analysis.symbolic.*
 import org.vorpal.research.kex.asm.analysis.symgraph2.objects.GraphVertex
 import org.vorpal.research.kex.compile.CompilationException
 import org.vorpal.research.kex.config.kexConfig
-import org.vorpal.research.kex.descriptor.ConstantDescriptor
 import org.vorpal.research.kex.descriptor.Descriptor
-import org.vorpal.research.kex.ktype.KexPointer
 import org.vorpal.research.kex.parameters.Parameters
 import org.vorpal.research.kex.reanimator.SymGraphGenerator
 import org.vorpal.research.kex.reanimator.UnsafeGenerator
@@ -44,9 +42,7 @@ class InstructionSymbolicCheckerGraph(
     override val pathSelector: SymbolicPathSelector = StacktracePathSelector()
     override val callResolver: SymbolicCallResolver = DefaultCallResolver(ctx)
     override val invokeDynamicResolver: SymbolicInvokeDynamicResolver = DefaultCallResolver(ctx)
-    private val tests = mutableListOf<ReportedTest>()
-
-    private data class ReportedTest(val parameters: GraphTestCase, val testPostfix: String)
+    private val tests = mutableListOf<Job>()
 
     companion object {
         @ExperimentalTime
@@ -74,36 +70,36 @@ class InstructionSymbolicCheckerGraph(
             graphBuilder.build(4)
             log.debug("After building the graph")
             runBlocking(coroutineContext) {
-                log.debug("Inside runBlocking")
+                log.debug("Running second phase with timeout = ${timeLimit.seconds}s")
                 withTimeoutOrNull(timeLimit.seconds) {
-                    log.debug("Inside withTimeoutOrNull")
                     targets.map {
-                        async {
+                        launch {
                             with(InstructionSymbolicCheckerGraph(context, it, graphBuilder)) {
-                                withTimeoutOrNull((timeLimit / 3).seconds) {
-                                    analyze()
-                                }
-                                generateTests()
+                                analyze()
+                                tests.joinAll()
                             }
                         }
-                    }.awaitAll()
+                    }.joinAll()
                 }
             }
         }
     }
 
-    suspend fun generateTests() = tests.forEach { (parameters, testPostfix) ->
+    private suspend fun generateTest(
+        parameters: GraphTestCase,
+        testPostfix: String,
+    ) {
+        val currentTestIndex = testIndex.getAndIncrement()
         val generatorGraph = SymGraphGenerator(
             ctx,
             rootMethod,
-            rootMethod.klassName + testPostfix + testIndex.getAndIncrement() + "graph",
-            graphBuilder
+            rootMethod.klassName + testPostfix + currentTestIndex + "graph",
         )
         log.debug("Generating test: ${generatorGraph.testName}")
         val generator = UnsafeGenerator(
             ctx,
             rootMethod,
-            rootMethod.klassName + testPostfix + testIndex.getAndIncrement()
+            rootMethod.klassName + testPostfix + currentTestIndex
         )
         generator.generate(parameters.descriptors)
         val testFile = if (generatorGraph.generate(parameters)) {
@@ -165,7 +161,6 @@ class InstructionSymbolicCheckerGraph(
                         InitialDescriptorReanimator(result.model, ctx)
                     )
                     generator.apply(changedState)
-                    val reverseObjectMapping = graphState.objectMapping.map { it.value to it.key }.toMap()
                     val thisParameter = absCall.thisArg.let {
                         when (it) {
                             GraphVertex.Null -> null
@@ -179,9 +174,22 @@ class InstructionSymbolicCheckerGraph(
                         }
                     }
                     val parameters = Parameters(thisParameter, argParameter)
-                    val termValues = generator.memory
-                        .filterKeys { it.type !is KexPointer }
-                        .mapValues { it.value as ConstantDescriptor }
+//                    val termValues = generator.memory
+//                        .filterKeys { !it.type.isGraphObject }
+                    val termValues = buildMap {
+                        for (term in graphState.heapState.terms) {
+                            val descriptor = generator.reanimateTerm(term)
+                            if (descriptor != null) {
+                                put(term, descriptor)
+                            }
+                        }
+                        for (arg in argParameter) {
+                            if (arg is PrimitiveArgument) {
+                                put(arg.term, generator.reanimateTerm(arg.term)!!)
+                            }
+                        }
+                    }
+                    // Not required, `descriptors` is generated only for fallback UnsafeGenerator
                     val descriptors = generateInitialDescriptors(rootMethod, ctx, result.model, changedState)
                     return GraphTestCase(parameters, graphState.heapState, termValues, descriptors)
                 } else {
@@ -221,7 +229,7 @@ class InstructionSymbolicCheckerGraph(
             log.debug("Return Instruction for method: $rootMethod")
             val result = findParameters(traverserState)
             if (result != null) {
-                reportGraphTest(result, "sh")
+                createTestGenerationTask(result, "sh")
             }
             currentState = null
 //            super.traverseReturnInst(inst)
@@ -250,7 +258,7 @@ class InstructionSymbolicCheckerGraph(
         if (catchFrame == null) {
             val result = findParameters(state)
             if (result != null) {
-                reportGraphTest(result, "_throw_${throwableType.toString().replace("[/$.]".toRegex(), "_")}")
+                createTestGenerationTask(result, "_throw_${throwableType.toString().replace("[/$.]".toRegex(), "_")}")
             }
         } else {
             super.throwExceptionAndReport(state, parameters, inst, throwable)
@@ -258,12 +266,11 @@ class InstructionSymbolicCheckerGraph(
     }
 
 
-    fun reportGraphTest(
+    private suspend fun createTestGenerationTask(
         parameters: GraphTestCase,
         testPostfix: String
-    ): Boolean {
-        tests.add(ReportedTest(parameters, testPostfix))
-        return true
+    ): Unit = coroutineScope {
+        tests.add(launch { generateTest(parameters, testPostfix) })
     }
 }
 
