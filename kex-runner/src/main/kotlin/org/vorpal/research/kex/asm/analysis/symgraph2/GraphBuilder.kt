@@ -150,6 +150,7 @@ class GraphBuilder(val ctx: ExecutionContext, klasses: Set<Class>) : TermBuilder
                 }
             }
             if (result != null && result) {
+                log.debug("New state $newState is implied by old state $state")
                 return null to null
             }
             log.debug("Checking for implication: $mappedNewPredicateState and ${state.predicateState} results in no implication $result")

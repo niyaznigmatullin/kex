@@ -207,6 +207,7 @@ class MethodAbstractlyInvocator(
             "result = ${result.javaClass}"
         }
         val descriptors = generateFinalObjectsState(method, ctx, result.model, checker.state)
+//        log.debug("Add new path model: model = ${result.model}, absCall = $contextAbsCall, predicateState = ${checker.state}")
         return descriptors to checker.state
     }
 
@@ -229,6 +230,7 @@ class MethodAbstractlyInvocator(
                     rootMethod,
                     traverserState.symbolicState,
                 )
+                log.debug("Add new path: descriptors = $objectDescriptors, predicateState = $fullPredicateState, absCall = ${contextAbsCall}")
                 report_(fullPredicateState, objectDescriptors, returnTerm?.let { objectDescriptors[it] })
             }
             currentState = null

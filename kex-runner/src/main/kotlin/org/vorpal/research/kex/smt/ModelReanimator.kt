@@ -402,6 +402,7 @@ abstract class DescriptorReanimator(
             null, 0 -> default(term.type)
             else -> {
                 val reanimatedType = resolveType(term.memspace, addr, term.type)
+//                log.debug("Reanimating term = $term, type = ${term.type}, reanimatedType = $reanimatedType")
                 if (term is StaticClassRefTerm) {
                     return@descriptor memory(term.memspace, address) { const(term.type as KexClass) }
                 }
