@@ -554,6 +554,7 @@ abstract class SymbolicTraverser(
         argumentTerms: List<Term>
     ) {
         if (candidate.body.isEmpty()) return
+        if (traverserState.stackTrace.size >= 7) return
         var newValueMap = traverserState.valueMap.builder().let { builder ->
             if (!candidate.isStatic) builder[values.getThis(candidate.klass)] = callee
             for ((index, type) in candidate.argTypes.withIndex()) {
@@ -666,6 +667,7 @@ abstract class SymbolicTraverser(
     }
 
     protected open suspend fun traverseJumpInst(inst: JumpInst) = acquireState { traverserState ->
+        if (traverserState.blockPath.size > 50) return
         checkReachabilityIncremental(
             traverserState,
             ConditionCheckQuery(

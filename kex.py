@@ -45,7 +45,8 @@ def run_kex(args: list [str]):
 		"-Xmx{}".format(HEAP_MEMORY_SIZE),
 		"-Djava.security.manager",
 		"-Djava.security.policy==kex.policy",
-		"-Dlogback.statusListenerClass=ch.qos.logback.core.status.NopStatusListener"
+		"-Dlogback.statusListenerClass=ch.qos.logback.core.status.NopStatusListener",
+		"-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,quiet=y,address=15005",
 	]
 	command.extend(get_jvm_args())
 	command.extend([
