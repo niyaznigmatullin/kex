@@ -11,6 +11,13 @@ open class FieldContainer(
     fun getElement(element: Pair<Term, Int>) = elements.getValue(element)
 
     fun toMutableFieldContainer() = MutableFieldContainer(fields.toMutableMap(), elements.toMutableMap())
+
+    override fun toString(): String {
+        val fieldsRepr = fields.map {
+            it.key.toString() + "->" + it.value.toString()
+        }.joinToString(", ")
+        return "FieldContainer{fields=[${fieldsRepr}]}"
+    }
 }
 
 class MutableFieldContainer(

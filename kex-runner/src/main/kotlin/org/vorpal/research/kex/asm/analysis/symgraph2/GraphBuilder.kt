@@ -6,32 +6,29 @@ import org.vorpal.research.kex.asm.analysis.symgraph2.heapstate.*
 import org.vorpal.research.kex.asm.analysis.symgraph2.objects.GraphObject
 import org.vorpal.research.kex.asm.analysis.symgraph2.objects.GraphVertex
 import org.vorpal.research.kex.config.kexConfig
-import org.vorpal.research.kex.descriptor.ObjectDescriptor
 import org.vorpal.research.kex.ktype.KexClass
+import org.vorpal.research.kex.ktype.isGraphObject
 import org.vorpal.research.kex.ktype.kexType
-import org.vorpal.research.kex.reanimator.actionsequence.ActionSequence
 import org.vorpal.research.kex.smt.AsyncSMTProxySolver
 import org.vorpal.research.kex.smt.Result
 import org.vorpal.research.kex.state.*
-import org.vorpal.research.kex.state.predicate.Predicate
 import org.vorpal.research.kex.state.predicate.path
-import org.vorpal.research.kex.state.predicate.state
 import org.vorpal.research.kex.state.term.*
 import org.vorpal.research.kex.state.transformer.TermRemapper
 import org.vorpal.research.kex.state.transformer.collectTerms
 import org.vorpal.research.kex.util.newFixedThreadPoolContextWithMDC
 import org.vorpal.research.kfg.ir.Class
 import org.vorpal.research.kfg.ir.Method
-import org.vorpal.research.kfg.type.ClassType
 import org.vorpal.research.kfg.type.Type
 import org.vorpal.research.kfg.type.TypeFactory
+import org.vorpal.research.kthelper.assert.unreachable
 import kotlin.system.measureTimeMillis
 import org.vorpal.research.kthelper.logging.log
 import kotlin.time.Duration.Companion.milliseconds
 
 class GraphBuilder(val ctx: ExecutionContext, klasses: Set<Class>) : TermBuilder {
     private val publicMethods = klasses.flatMap { it.allMethods }.filter {
-        it.isPublic && !it.isNative && (!it.isStatic || it.returnType.kexType is KexClass)
+        it.isPublic && !it.isNative && (!it.isStatic || it.returnType.kexType is KexClass) && !it.isAbstract
     }
     private val coroutineContext = newFixedThreadPoolContextWithMDC(
         kexConfig.getIntValue("symbolic", "numberOfExecutors", 8),
@@ -77,9 +74,6 @@ class GraphBuilder(val ctx: ExecutionContext, klasses: Set<Class>) : TermBuilder
                         newStates.add(unionState)
                     }
                 }
-//                if (!newStates.any { it.checkIsomorphism(newState) != null }) {
-//                    newStates.add(newState)
-//                }
             }
         }
         newStates
@@ -107,20 +101,29 @@ class GraphBuilder(val ctx: ExecutionContext, klasses: Set<Class>) : TermBuilder
                     is GraphObject -> addAll(obj.primitiveFields.values.filter { it.isNamed })
                 }
             }
+            for ((index, arg) in c.arguments.withIndex()) {
+                if (arg is NoneArgument) {
+                    add(arg(c.method.argTypes[index].kexType, index))
+                }
+            }
+            addAll(state.terms)
+        }.filter {
+            when (it) {
+                is ValueTerm, is ArgumentTerm -> true
+                is ConstClassTerm, is ConstStringTerm, is FieldTerm, is ArrayIndexTerm -> false
+                is StaticClassRefTerm -> unreachable("StaticClassRefTerm unexpected")
+                is ReturnValueTerm -> unreachable("ReturnValueTerm unexpected")
+                else -> unreachable("any ${it.javaClass} unexpected")
+            }
         }.associateWith { generate(it.type) }
         val replacedPredicateState = TermRemapper(namedTerms).apply(predicateState)
         val freeTerms = namedTerms
             .filterKeys { it is ArgumentTerm }
             .mapKeys { it.key as ArgumentTerm }
         val absCall = c.setPrimitiveTerms(freeTerms)
+        check(absCall.arguments.all { it != NoneArgument })
         val reverseMapping = namedTerms.toList().associate { it.second to it.first }
-//        println("${p.objects} $namedTerms $predicateState")
         p.objects.forEach { it.remapTerms(namedTerms) }
-//        if (state.terms.any { it !in namedTerms }) {
-//            check(false)
-//        }
-//        check(state.terms.all { it in namedTerms })
-//        println("after ${p.objects}")
         return InvocationResultHeapState(
             p.objects,
             p.activeObjects,
@@ -133,32 +136,13 @@ class GraphBuilder(val ctx: ExecutionContext, klasses: Set<Class>) : TermBuilder
         )
     }
 
-    private fun makeReverseFieldMapping(
-        state: HeapState,
-        mapping: Map<GraphVertex, GraphVertex>
-    ): Map<Term, Term> {
-        return buildMap {
-            for (obj1 in state.objects) {
-                when (obj1) {
-                    is GraphObject -> {
-                        val obj2 = mapping.getValue(obj1) as GraphObject
-                        for ((field, term2) in obj2.primitiveFields) {
-                            val term1 = obj1.primitiveFields.getValue(field)
-                            put(term2, term1)
-                        }
-                    }
-                }
-            }
-        }
-    }
-
     private suspend fun addState(
         newState: HeapState
     ): Pair<HeapState?, HeapState?> {
         log.debug("Trying to add new state: ${newState.toString(emptyMap())}")
         for (state in activeStates) {
             val objMap = state.checkIsomorphism(newState) ?: continue
-            val fieldMapping = makeReverseFieldMapping(state, objMap)
+            val fieldMapping = state.makeReverseFieldMapping(objMap)
             val mappedNewPredicateState = TermRemapper(fieldMapping).apply(newState.predicateState)
             val result = withTimeoutOrNull(500.milliseconds) {
                 AsyncSMTProxySolver(ctx).use {
@@ -166,6 +150,7 @@ class GraphBuilder(val ctx: ExecutionContext, klasses: Set<Class>) : TermBuilder
                 }
             }
             if (result != null && result) {
+                log.debug("New state $newState is implied by old state $state")
                 return null to null
             }
             log.debug("Checking for implication: $mappedNewPredicateState and ${state.predicateState} results in no implication $result")
@@ -221,7 +206,7 @@ class GraphBuilder(val ctx: ExecutionContext, klasses: Set<Class>) : TermBuilder
                 return
             }
             val argType = m.argTypes[currentArgumentIndex]
-            if (argType is ClassType) {
+            if (argType.kexType.isGraphObject) {
                 for (arg in getAllObjectsOfSubtype(argType)) {
                     argumentsList.add(ObjectArgument(arg))
                     backtrack(currentArgumentIndex + 1)

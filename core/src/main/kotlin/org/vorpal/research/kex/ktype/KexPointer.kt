@@ -6,6 +6,7 @@ import org.vorpal.research.kex.util.javaString
 import org.vorpal.research.kfg.type.SystemTypeNames
 import org.vorpal.research.kfg.type.Type
 import org.vorpal.research.kfg.type.TypeFactory
+import org.vorpal.research.kthelper.assert.fail
 
 @InheritorOf("KexType")
 @Serializable
@@ -130,3 +131,26 @@ val KexType.isString get() = this is KexClass && this.klass == SystemTypeNames.s
 fun KexJavaClass() = KexClass(SystemTypeNames.classClass)
 
 val KexType.isJavaClass get() = this is KexClass && this.klass == SystemTypeNames.classClass
+
+
+val KexType.isGraphObject: Boolean
+    get() = when (this) {
+        is KexNull -> {
+            fail { "null" }
+        }
+
+        is KexPointer -> {
+            when {
+                this is KexReference -> this.reference.isGraphObject
+                this.isString -> false
+                this.isJavaClass -> false
+                this is KexArray -> {
+                    @Suppress("RecursivePropertyAccessor")
+                    this.element.isGraphObject
+                }
+                else -> true
+            }
+        }
+
+        else -> false
+    }

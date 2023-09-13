@@ -3,10 +3,10 @@ package org.vorpal.research.kex.asm.analysis.symgraph2.heapstate
 import org.vorpal.research.kex.ExecutionContext
 import org.vorpal.research.kex.asm.analysis.symgraph2.objects.GraphObject
 import org.vorpal.research.kex.asm.analysis.symgraph2.objects.GraphVertex
-import org.vorpal.research.kex.descriptor.ConstantDescriptor
 import org.vorpal.research.kex.descriptor.Descriptor
 import org.vorpal.research.kex.ktype.KexClass
 import org.vorpal.research.kex.reanimator.actionsequence.ActionSequence
+import org.vorpal.research.kex.reanimator.actionsequence.generator.Generator
 import org.vorpal.research.kex.smt.AsyncSMTProxySolver
 import org.vorpal.research.kex.smt.FinalDescriptorReanimator
 import org.vorpal.research.kex.smt.Result
@@ -202,16 +202,16 @@ abstract class HeapState(
             }
             when (d) {
                 is GraphObject -> {
-                    for ((_, value) in d.objectFields) {
+                    for ((field, value) in d.objectFields) {
                         val from = stateToIndex.getValue(d)
                         val to = stateToIndex.getValue(value)
-                        appendLine("$from -> $to")
+                        appendLine("$from.${field.first} -> $to")
                     }
                 }
             }
         }
         for (obj in objects) {
-            val objName = stateToIndex.getValue(obj)
+            val objName = stateToIndex.getValue(obj) + "<$obj>"
             val objFields = when (obj) {
                 is GraphObject -> {
                     obj.primitiveFields.map { (field, value) ->
@@ -240,13 +240,18 @@ abstract class HeapState(
 
     suspend fun restore(
         ctx: ExecutionContext,
-        someTermValues: Map<Term, ConstantDescriptor>,
+        someTermValues: Map<Term, Descriptor>,
+        argumentGenerator: Generator,
     ): RestorationResult? {
         val allTermValues = reanimateAllTerms(ctx, someTermValues) ?: return null
-        return restoreCalls(ctx, allTermValues)
+        return restoreCalls(ctx, allTermValues, argumentGenerator)
     }
 
-    abstract suspend fun restoreCalls(ctx: ExecutionContext, termValues: Map<Term, Descriptor>): RestorationResult
+    abstract suspend fun restoreCalls(
+        ctx: ExecutionContext,
+        termValues: Map<Term, Descriptor>,
+        argumentGenerator: Generator
+    ): RestorationResult
 
     suspend fun checkPredicateState(ctx: ExecutionContext, terms: Map<Term, Descriptor>): Result {
         var concretePredicateState = predicateState
@@ -268,7 +273,7 @@ abstract class HeapState(
 
     suspend fun reanimateAllTerms(
         ctx: ExecutionContext,
-        someTermValues: Map<Term, ConstantDescriptor>,
+        someTermValues: Map<Term, Descriptor>,
     ): Map<Term, Descriptor>? {
         val result = checkPredicateState(ctx, someTermValues)
         log.debug("Checking concrete mapping, result: ${result.javaClass.simpleName}")
@@ -276,7 +281,18 @@ abstract class HeapState(
             return null
         }
         val reanimator = FinalDescriptorReanimator(result.model, ctx)
-        val allTermValues = terms.associateWith { reanimator.reanimate(it) }
-        return allTermValues
+        return terms.associateWith { reanimator.reanimate(it) }
+    }
+
+    fun makeReverseFieldMapping(mapping: Map<GraphVertex, GraphVertex>) = buildMap {
+        for (obj1 in objects) {
+            if (obj1 is GraphObject) {
+                val obj2 = mapping.getValue(obj1) as GraphObject
+                for ((field, term2) in obj2.primitiveFields) {
+                    val term1 = obj1.primitiveFields.getValue(field)
+                    put(term2, term1)
+                }
+            }
+        }
     }
 }

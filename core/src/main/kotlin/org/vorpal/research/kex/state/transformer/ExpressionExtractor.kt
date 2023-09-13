@@ -1,5 +1,6 @@
 package org.vorpal.research.kex.state.transformer
 
+import org.vorpal.research.kex.ktype.isGraphObject
 import org.vorpal.research.kex.state.PredicateState
 import org.vorpal.research.kex.state.fields.FieldContainer
 import org.vorpal.research.kex.state.predicate.FieldInitializerPredicate
@@ -20,18 +21,27 @@ class ExpressionExtractor(initialFields: FieldContainer, val mapToRepresenter: M
 
     override fun transformFieldLoad(term: FieldLoadTerm): Term {
         val result = super.transformFieldLoad(term) as FieldLoadTerm
+        if (result.field.subTerms.size == 1 && !result.field.subTerms.first().type.isGraphObject) {
+            return result
+        }
 //        println(fields)
         return fields.getField(fieldIndex(result.field))
     }
 
     override fun transformFieldStore(predicate: FieldStorePredicate): Predicate {
         val result = super.transformFieldStore(predicate) as FieldStorePredicate
+        if (result.field.subTerms.size == 1 && !result.field.subTerms.first().type.isGraphObject) {
+            return result
+        }
         fields.setField(fieldIndex(result.field), result.value)
         return nothing()
     }
 
     override fun transformFieldInitializer(predicate: FieldInitializerPredicate): Predicate {
         val result = super.transformFieldInitializer(predicate) as FieldInitializerPredicate
+        if (result.field.subTerms.size == 1 && !result.field.subTerms.first().type.isGraphObject) {
+            return result
+        }
         fields.setField(fieldIndex(result.field), result.value)
         return nothing()
     }
