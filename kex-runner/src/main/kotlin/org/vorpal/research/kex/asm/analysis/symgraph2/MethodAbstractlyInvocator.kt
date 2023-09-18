@@ -206,7 +206,9 @@ class MethodAbstractlyInvocator(
         check(result is Result.SatResult) {
             "result = ${result.javaClass}"
         }
-        val descriptors = generateFinalObjectsState(method, ctx, result.model, checker.state)
+        val descriptors = generateFinalObjectsState(method, ctx, result.model, checker.state).mapValues {
+            it.value.concretize(cm, ctx.accessLevel, ctx.random)
+        }
 //        log.debug("Add new path model: model = ${result.model}, absCall = $contextAbsCall, predicateState = ${checker.state}")
         return descriptors to checker.state
     }
@@ -221,7 +223,7 @@ class MethodAbstractlyInvocator(
             val result = check(rootMethod, traverserState.symbolicState)
             if (result != null) {
                 val returnTerm = when {
-                    inst.hasReturnValue -> traverserState.mkTerm(inst.returnValue)
+                    inst.hasReturnValue && inst.returnType.kexType.isGraphObject -> traverserState.mkTerm(inst.returnValue)
                     rootMethod.isConstructor -> traverserState.mkTerm(values.getThis(rootMethod.klass))
                     else -> null
                 }

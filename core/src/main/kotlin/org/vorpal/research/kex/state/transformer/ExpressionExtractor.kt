@@ -8,7 +8,9 @@ import org.vorpal.research.kex.state.predicate.FieldStorePredicate
 import org.vorpal.research.kex.state.predicate.Predicate
 import org.vorpal.research.kex.state.term.FieldLoadTerm
 import org.vorpal.research.kex.state.term.FieldTerm
+import org.vorpal.research.kex.state.term.StaticClassRefTerm
 import org.vorpal.research.kex.state.term.Term
+import org.vorpal.research.kthelper.logging.log
 
 class ExpressionExtractor(initialFields: FieldContainer, val mapToRepresenter: Map<Term, Term>) :
     Transformer<ExpressionExtractor> {
@@ -25,6 +27,9 @@ class ExpressionExtractor(initialFields: FieldContainer, val mapToRepresenter: M
             return result
         }
 //        println(fields)
+        if ((result.field as FieldTerm).owner is StaticClassRefTerm) {
+            return term
+        }
         return fields.getField(fieldIndex(result.field))
     }
 
