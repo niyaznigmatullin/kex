@@ -289,7 +289,7 @@ abstract class HeapState(
             if (obj1 is GraphObject) {
                 val obj2 = mapping.getValue(obj1) as GraphObject
                 for ((field, term2) in obj2.primitiveFields) {
-                    val term1 = obj1.primitiveFields.getValue(field)
+                    val term1 = obj1.primitiveFields[field] ?: continue
                     put(term2, term1)
                 }
             }

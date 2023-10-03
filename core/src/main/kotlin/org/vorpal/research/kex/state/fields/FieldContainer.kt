@@ -18,6 +18,12 @@ open class FieldContainer(
         }.joinToString(", ")
         return "FieldContainer{fields=[${fieldsRepr}]}"
     }
+
+    fun mapOwners(map: Map<Term, Term>): FieldContainer {
+        return FieldContainer(
+            fields.mapKeys { map.getValue(it.key.first) to it.key.second },
+            elements.mapKeys { map.getValue(it.key.first) to it.key.second })
+    }
 }
 
 class MutableFieldContainer(

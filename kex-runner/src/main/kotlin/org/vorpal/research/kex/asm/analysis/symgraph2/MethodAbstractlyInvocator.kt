@@ -17,9 +17,11 @@ import org.vorpal.research.kex.state.PredicateState
 import org.vorpal.research.kex.state.fields.FieldContainer
 import org.vorpal.research.kex.state.fields.MutableFieldContainer
 import org.vorpal.research.kex.state.predicate.*
+import org.vorpal.research.kex.state.term.NullTerm
 import org.vorpal.research.kex.state.term.Term
 import org.vorpal.research.kex.state.transformer.*
 import org.vorpal.research.kex.trace.symbolic.*
+import org.vorpal.research.kfg.ir.Class
 import org.vorpal.research.kfg.ir.Method
 import org.vorpal.research.kfg.ir.value.Constant
 import org.vorpal.research.kfg.ir.value.instruction.Instruction
@@ -164,7 +166,13 @@ class MethodAbstractlyInvocator(
         }
 
         private fun addDefaultFields(objectTerm: Term) {
-            val fields = (objectTerm.type as KexClass).kfgClass(cm.type).fields
+            val fields = buildList {
+                var klass: Class? = (objectTerm.type as KexClass).kfgClass(cm.type)
+                while (klass != null) {
+                    addAll(klass.fields)
+                    klass = klass.superClass
+                }
+            }
             for (f in fields) {
                 if (f.isStatic) {
                     continue
@@ -252,11 +260,19 @@ class MethodAbstractlyInvocator(
     ) {
         val activeDescriptors = getActiveDescriptors(objectDescriptors, returnDescriptor)
         val allDescriptors = findAllReachableDescriptors(activeDescriptors) ?: return
-        val newObjects = collectNewObjectTerms(predicateState)
-        val representerObjects = buildSet {
-            addAll(allObjectsBefore.keys)
-            addAll(newObjects)
-        }
+//        val newObjects = collectNewObjectTerms(predicateState)
+        val representerObjects = buildMap<Descriptor, Term> {
+            for ((term, descriptor) in objectDescriptors.filterValues { it is ObjectDescriptor && it.type.isGraphObject }) {
+                val has = get(descriptor)
+                if (has == null || term.type.isSubtypeOf(cm.type, has.type)) {
+                    put(descriptor, term)
+                }
+            }
+        }.values.toSet()
+//        val representerObjects = buildSet {
+//            addAll(allObjectsBefore.keys)
+//            addAll(newObjects)
+//        }
         val representersByDescriptor = representerObjects.associateBy {
             objectDescriptors.getValue(it)
         }
@@ -265,7 +281,9 @@ class MethodAbstractlyInvocator(
                 representersByDescriptor.getValue(descriptor)
             }
         var updatedState = BoolTypeAdapter(ctx.types).transform(predicateState)
-        val fields = extractValues(termsOfFieldsBefore, mapToRepresenter, updatedState).let { (fields, state) ->
+        val fieldsByRepresenter = termsOfFieldsBefore.mapOwners(mapToRepresenter)
+        log.debug("map to representer: $mapToRepresenter, fields = $fieldsByRepresenter")
+        val fields = extractValues(fieldsByRepresenter, mapToRepresenter, updatedState).let { (fields, state) ->
             updatedState = state
             fields
         }
