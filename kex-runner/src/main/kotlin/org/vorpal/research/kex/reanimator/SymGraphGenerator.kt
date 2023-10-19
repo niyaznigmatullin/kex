@@ -75,7 +75,7 @@ class PrimitiveGeneratorProxy(override val context: GeneratorContext) : Generato
     private val stringGenerator = StringGenerator(constGenerator) // No need for fallback here
     private val classGenerator = ClassGenerator(stringGenerator)
     override fun supports(descriptor: Descriptor): Boolean {
-        return !descriptor.type.isGraphObject
+        return descriptor.type is KexNull || !descriptor.type.isGraphObject
     }
 
     private fun getGenerator(type: KexType): Generator = when {
@@ -83,7 +83,7 @@ class PrimitiveGeneratorProxy(override val context: GeneratorContext) : Generato
 
         type.isString -> stringGenerator
 
-        type is KexArray -> ArrayGenerator(getGenerator(type.element))
+        type is KexArray -> ArrayGenerator(this)
 
         type is KexNull -> constGenerator
 

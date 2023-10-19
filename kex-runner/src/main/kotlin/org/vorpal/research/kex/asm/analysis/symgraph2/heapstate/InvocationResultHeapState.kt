@@ -29,6 +29,7 @@ class InvocationResultHeapState(
         append(parentState.additionalToString(stateEnumeration))
         append(" -> ")
         append(stateEnumeration[this@InvocationResultHeapState])
+        append("#${super.hashCode().toString(16)}")
         append("(")
         append(absCall.method)
         append(")")

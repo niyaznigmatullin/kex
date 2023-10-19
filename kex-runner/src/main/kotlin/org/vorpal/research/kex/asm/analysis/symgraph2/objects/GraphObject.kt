@@ -10,7 +10,7 @@ class GraphObject(type: KexClass) : GraphVertex(type) {
 
     override fun toString(): String {
         val reference = super.hashCode().toString(16)
-        return "GraphObject#$reference(type=$type, primitiveFields=$primitiveFields)"
+        return "GraphObject#$reference(type=$type, primitiveFields=$primitiveFields, objectFields=${objectFields.keys})"
     }
 
     override fun remapTerms(mapping: Map<Term, Term>) {
