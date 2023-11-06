@@ -189,16 +189,16 @@ class GraphBuilder(val ctx: ExecutionContext, klasses: Set<Class>) : TermBuilder
 
         private fun getAllObjectsOfSubtype(type: Type): List<GraphVertex> {
             return state.activeObjects.filter {
-                it.type.isSubtypeOf(this@GraphBuilder.types, type.kexType) || it == GraphVertex.Null
+                it.type.isSubtypeOf(this@GraphBuilder.types, type.kexType) || it == GraphValue.Null
             }
         }
 
         private fun backtrack(currentArgumentIndex: Int) {
             if (currentArgumentIndex == m.argTypes.size) {
                 val thisCandidates = if (m.isStatic || m.isConstructor) {
-                    listOf(GraphVertex.Null)
+                    listOf(GraphValue.Null)
                 } else {
-                    getAllObjectsOfSubtype(m.klass.asType).filter { it != GraphVertex.Null }
+                    getAllObjectsOfSubtype(m.klass.asType).filter { it != GraphValue.Null }
                 }
                 for (thisArg in thisCandidates) {
                     callsList.add(AbsCall(m, thisArg, argumentsList.toList()))
@@ -258,7 +258,7 @@ class GraphBuilder(val ctx: ExecutionContext, klasses: Set<Class>) : TermBuilder
     private fun HeapState.buildSymbolicState(): HeapSymbolicState {
         val objectTerms = buildMap {
             for (v in objects) {
-                val term = if (v == GraphVertex.Null) {
+                val term = if (v == GraphValue.Null) {
                     const(null)
                 } else {
                     generate(v.type)

@@ -60,6 +60,9 @@ class SymGraphGenerator(
 
                 is PrimitiveArgument -> {
                     val descriptor = testCase.termValues.getValue(it.term)
+                    if (!generator.supports(descriptor)) {
+                        log.debug("Generator doesn't support type '${descriptor.type}'")
+                    }
                     generator.generate(descriptor)
                 }
 

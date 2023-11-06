@@ -51,7 +51,7 @@ class MethodAbstractlyInvocator(
         thisArg: GraphVertex,
         arguments: List<Argument>
     ) {
-        if (thisArg == GraphVertex.Null && (!rootMethod.isStatic && !rootMethod.isConstructor)) {
+        if (thisArg == GraphValue.Null && (!rootMethod.isStatic && !rootMethod.isConstructor)) {
             return
         }
         val initializer = ObjectInitializer(heapState.objects, thisArg, arguments, rootMethod.isConstructor)
@@ -145,11 +145,11 @@ class MethodAbstractlyInvocator(
         fun generateObjectTerms(): Map<GraphVertex, Term> {
             val terms = objects.associateWith {
                 when (it) {
-                    GraphVertex.Null -> const(null)
+                    GraphValue.Null -> const(null)
                     else -> generate(it.type)
                 }
             }
-            for ((obj, objectTerm) in terms.filter { it.key != GraphVertex.Null }) {
+            for ((obj, objectTerm) in terms.filter { it.key != GraphValue.Null }) {
                 obj as GraphObject
                 if (thisArg != obj && !arguments.any { it is ObjectArgument && it.obj == obj }) {
                     statePredicates.add(state { objectTerm.new() })
@@ -290,7 +290,7 @@ class MethodAbstractlyInvocator(
         updatedState = removeNonInterestingPredicates(updatedState)
         val mapping = allDescriptors.associateWith {
             when (it) {
-                ConstantDescriptor.Null -> GraphVertex.Null
+                ConstantDescriptor.Null -> GraphValue.Null
                 is ObjectDescriptor -> GraphObject(it.type as KexClass)
                 else -> unreachable("only objects are supported")
             }
@@ -314,7 +314,7 @@ class MethodAbstractlyInvocator(
                 val newObject = mapping.getValue(descriptor)
                 put(oldObject, newObject)
             }
-            put(GraphVertex.Null, GraphVertex.Null)
+            put(GraphValue.Null, GraphValue.Null)
         }
         invocationPaths.add(
             CallResult(

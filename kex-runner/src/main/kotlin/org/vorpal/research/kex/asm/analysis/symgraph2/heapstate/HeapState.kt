@@ -1,6 +1,7 @@
 package org.vorpal.research.kex.asm.analysis.symgraph2.heapstate
 
 import org.vorpal.research.kex.ExecutionContext
+import org.vorpal.research.kex.asm.analysis.symgraph2.GraphValue
 import org.vorpal.research.kex.asm.analysis.symgraph2.objects.GraphObject
 import org.vorpal.research.kex.asm.analysis.symgraph2.objects.GraphVertex
 import org.vorpal.research.kex.descriptor.Descriptor
@@ -24,7 +25,7 @@ abstract class HeapState(
 ) {
 
     private val stateToIndex = objects.withIndex().associate { (i, v) ->
-        val id = if (v == GraphVertex.Null) {
+        val id = if (v == GraphValue.Null) {
             "null"
         } else if (activeObjects.contains(v)) {
             "a$i"
@@ -137,7 +138,7 @@ abstract class HeapState(
             is GraphObject -> {
                 mapTo as GraphObject
                 for ((field, value) in obj.objectFields) {
-                    val otherValue = mapTo.objectFields.getOrDefault(field, GraphVertex.Null)
+                    val otherValue = mapTo.objectFields.getOrDefault(field, GraphValue.Null)
                     val map1 = mapping[value]
                     val map2 = reverseMapping[otherValue]
                     if (map1 == null && map2 == null) {

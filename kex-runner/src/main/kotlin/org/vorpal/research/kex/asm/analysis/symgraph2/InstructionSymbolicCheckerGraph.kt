@@ -167,7 +167,7 @@ class InstructionSymbolicCheckerGraph(
                     generator.apply(changedState)
                     val thisParameter = absCall.thisArg.let {
                         when (it) {
-                            GraphVertex.Null -> null
+                            GraphValue.Null -> null
                             else -> ObjectArgument(it)
                         }
                     }
