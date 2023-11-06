@@ -125,6 +125,8 @@ class MethodAbstractlyInvocator(
             ), rootMethod.body.entry
         )
 
+        log.debug("Running method $rootMethod: ${rootMethod.body}")
+
         while (pathSelector.hasNext()) {
             val (currentState, currentBlock) = pathSelector.next()
             this@MethodAbstractlyInvocator.currentState = currentState

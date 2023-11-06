@@ -26,10 +26,14 @@ class ExpressionExtractor(initialFields: FieldContainer, val mapToRepresenter: M
         if (result.field.subTerms.size == 1 && !result.field.subTerms.first().type.isGraphObject) {
             return result
         }
-//        println(fields)
         if ((result.field as FieldTerm).owner is StaticClassRefTerm) {
             return term
         }
+//        if (!fields.containsField(fieldIndex(result.field))) {
+//            log.debug("field look $term converted to ${result.field} and then to ${mapToRepresenter.getValue(result.field.owner)}, " +
+//                    "term.field.owner.type = ${(term.field as FieldTerm).owner.type}, result.field.owner.type = ${result.field.owner.type}, representer.type = ${mapToRepresenter.getValue(result.field.owner).type}")
+//            log.debug("Current fields: $fields")
+//        }
         return fields.getField(fieldIndex(result.field))
     }
 

@@ -8,6 +8,8 @@ open class FieldContainer(
 ) {
     fun getField(field: Pair<Term, String>) = fields.getValue(field)
 
+    fun containsField(field: Pair<Term, String>) = fields.containsKey(field)
+
     fun getElement(element: Pair<Term, Int>) = elements.getValue(element)
 
     fun toMutableFieldContainer() = MutableFieldContainer(fields.toMutableMap(), elements.toMutableMap())
