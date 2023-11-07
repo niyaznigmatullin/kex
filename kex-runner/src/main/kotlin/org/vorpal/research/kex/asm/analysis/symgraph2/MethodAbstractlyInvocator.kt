@@ -158,8 +158,15 @@ class MethodAbstractlyInvocator(
                     addDefaultFields(objectTerm)
                 }
                 nullCheckPredicates.add(path { (objectTerm eq null) equality false })
-                addFieldsTo(obj.objectFields.mapValues { terms.getValue(it.value) }, objectTerm)
-                addFieldsTo(obj.primitiveFields, objectTerm)
+                addFieldsTo(obj.objectFields.mapValues {
+                    val v = it.value
+                    when (v) {
+                        is GraphVertex -> terms.getValue(v)
+                        is GraphPrimitive -> v.term
+                        else -> unreachable("unexpected type ${v.javaClass}")
+                    }
+                }, objectTerm)
+//                addFieldsTo(obj.primitiveFields, objectTerm)
             }
             if (isConstructor) {
                 addDefaultFields(`this`(rootMethod.klass.symbolicClass))
@@ -338,20 +345,22 @@ class MethodAbstractlyInvocator(
     ) {
         obj.objectFields = buildMap {
             for ((field, descriptorTo) in descriptor.fields) {
-                val fieldType = field.second
+                val (fieldName, fieldType) = field
                 if (fieldType.isGraphObject) {
                     put(field, mapping.getValue(descriptorTo))
+                } else {
+                    put(field, GraphPrimitive(fields.getField(representer to fieldName)))
                 }
             }
         }
-        obj.primitiveFields = buildMap {
-            for ((field, _) in descriptor.fields) {
-                val (fieldName, fieldType) = field
-                if (!fieldType.isGraphObject) {
-                    put(field, fields.getField(representer to fieldName))
-                }
-            }
-        }
+//        obj.primitiveFields = buildMap {
+//            for ((field, _) in descriptor.fields) {
+//                val (fieldName, fieldType) = field
+//                if (!fieldType.isGraphObject) {
+//                    put(field, fields.getField(representer to fieldName))
+//                }
+//            }
+//        }
     }
 
 //    private fun convertArgsToFreeTerms(state: PredicateState): Pair<Collection<Term>, PredicateState> {

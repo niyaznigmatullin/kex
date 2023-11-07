@@ -98,7 +98,8 @@ class GraphBuilder(val ctx: ExecutionContext, klasses: Set<Class>) : TermBuilder
             addAll(collectTerms(predicateState) { it.isNamed })
             for (obj in p.objects) {
                 when (obj) {
-                    is GraphObject -> addAll(obj.primitiveFields.values.filter { it.isNamed })
+                    is GraphObject -> addAll(obj.objectFields.values.filterIsInstance<GraphPrimitive>().map { it.term }
+                        .filter { it.isNamed })
                 }
             }
             for ((index, arg) in c.arguments.withIndex()) {
@@ -280,11 +281,16 @@ class GraphBuilder(val ctx: ExecutionContext, klasses: Set<Class>) : TermBuilder
                     continue
                 }
                 for ((field, fieldValue) in obj.objectFields) {
-                    add(path { term.field(field).load() equality objectTerms.getValue(fieldValue) })
+                    when (fieldValue) {
+                        is GraphPrimitive -> add(path { term.field(field).load() equality fieldValue.term })
+                        is GraphVertex -> add(path {
+                            term.field(field).load() equality objectTerms.getValue(fieldValue)
+                        })
+                    }
                 }
-                for ((field, fieldValue) in obj.primitiveFields) {
-                    add(path { term.field(field).load() equality fieldValue })
-                }
+//                for ((field, fieldValue) in obj.primitiveFields) {
+//                    add(path { term.field(field).load() equality fieldValue })
+//                }
             }
         }
         return HeapSymbolicState(this, predicateState + BasicState(predicates), objectTerms)

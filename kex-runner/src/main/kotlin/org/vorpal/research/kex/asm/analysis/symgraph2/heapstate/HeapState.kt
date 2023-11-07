@@ -1,6 +1,7 @@
 package org.vorpal.research.kex.asm.analysis.symgraph2.heapstate
 
 import org.vorpal.research.kex.ExecutionContext
+import org.vorpal.research.kex.asm.analysis.symgraph2.GraphPrimitive
 import org.vorpal.research.kex.asm.analysis.symgraph2.GraphValue
 import org.vorpal.research.kex.asm.analysis.symgraph2.objects.GraphObject
 import org.vorpal.research.kex.asm.analysis.symgraph2.objects.GraphVertex
@@ -137,8 +138,12 @@ abstract class HeapState(
         when (obj) {
             is GraphObject -> {
                 mapTo as GraphObject
-                for ((field, value) in obj.objectFields) {
-                    val otherValue = mapTo.objectFields.getOrDefault(field, GraphValue.Null)
+                val mappedObjFields = obj.objectFields
+                    .filterValues { it is GraphVertex }
+                    .mapValues { it.value as GraphVertex }
+                for ((field, value) in mappedObjFields) {
+                    val otherValue =
+                        mapTo.objectFields.getOrDefault(field, GraphValue.Null) as? GraphVertex ?: return false
                     val map1 = mapping[value]
                     val map2 = reverseMapping[otherValue]
                     if (map1 == null && map2 == null) {
@@ -162,38 +167,38 @@ abstract class HeapState(
         return true
     }
 
-    private fun checkMapping(
-        a: List<GraphVertex>,
-        b: List<GraphVertex>,
-        other: HeapState,
-        indexA: Map<GraphVertex, Int>,
-        indexB: Map<GraphVertex, Int>,
-        p: IntArray
-    ): Boolean {
-        for ((i, x) in a.withIndex()) {
-            val y = b[p[i]]
-            if (x.type != y.type) {
-                return false
-            }
-            if ((x in activeObjects) != (y in other.activeObjects)) {
-                return false
-            }
-            if (x.type !is KexClass) {
-                continue
-            }
-            when (x) {
-                is GraphObject -> {
-                    y as GraphObject
-                    for ((field, value) in x.objectFields) {
-                        if (p[indexA.getValue(value)] != indexB[y.objectFields[field]]) {
-                            return false
-                        }
-                    }
-                }
-            }
-        }
-        return true
-    }
+//    private fun checkMapping(
+//        a: List<GraphVertex>,
+//        b: List<GraphVertex>,
+//        other: HeapState,
+//        indexA: Map<GraphVertex, Int>,
+//        indexB: Map<GraphVertex, Int>,
+//        p: IntArray
+//    ): Boolean {
+//        for ((i, x) in a.withIndex()) {
+//            val y = b[p[i]]
+//            if (x.type != y.type) {
+//                return false
+//            }
+//            if ((x in activeObjects) != (y in other.activeObjects)) {
+//                return false
+//            }
+//            if (x.type !is KexClass) {
+//                continue
+//            }
+//            when (x) {
+//                is GraphObject -> {
+//                    y as GraphObject
+//                    for ((field, value) in x.objectFields) {
+//                        if (p[indexA.getValue(value)] != indexB[y.objectFields[field]]) {
+//                            return false
+//                        }
+//                    }
+//                }
+//            }
+//        }
+//        return true
+//    }
 
     private fun objectGraphToString() = buildString {
         appendLine("Nodes = ${objects.size}, active = ${activeObjects.size}")
@@ -203,9 +208,9 @@ abstract class HeapState(
             }
             when (d) {
                 is GraphObject -> {
-                    for ((field, value) in d.objectFields) {
+                    for ((field, value) in d.objectFields.filterValues { it is GraphVertex }) {
                         val from = stateToIndex.getValue(d)
-                        val to = stateToIndex.getValue(value)
+                        val to = stateToIndex.getValue(value as GraphVertex)
                         appendLine("$from.${field.first} -> $to")
                     }
                 }
@@ -215,11 +220,14 @@ abstract class HeapState(
             val objName = stateToIndex.getValue(obj) + "<$obj>"
             val objFields = when (obj) {
                 is GraphObject -> {
-                    obj.primitiveFields.map { (field, value) ->
-                        ".${field.first} = $value"
-                    }.joinToString(", ") + ", " + obj.objectFields.map { (field, value) ->
-                        ".${field.first} = ${stateToIndex.getValue(value)}"
-                    }.joinToString(", ")
+                    obj.objectFields.filterValues { it is GraphPrimitive }.map { (field, value) ->
+                        value as GraphPrimitive
+                        ".${field.first} = ${value.term}"
+                    }.joinToString(", ") + ", " + obj.objectFields.filterValues { it is GraphVertex }
+                        .map { (field, value) ->
+                            value as GraphVertex
+                            ".${field.first} = ${stateToIndex.getValue(value)}"
+                        }.joinToString(", ")
                 }
 
                 else -> ""
@@ -289,9 +297,16 @@ abstract class HeapState(
         for (obj1 in objects) {
             if (obj1 is GraphObject) {
                 val obj2 = mapping.getValue(obj1) as GraphObject
-                for ((field, term2) in obj2.primitiveFields) {
-                    val term1 = obj1.primitiveFields[field] ?: continue
-                    put(term2, term1)
+//                for ((field, term2) in obj2.primitiveFields) {
+//                    val term1 = obj1.primitiveFields[field] ?: continue
+//                    put(term2, term1)
+//                }
+                for ((field, term2) in obj2.objectFields) {
+                    if (term2 is GraphPrimitive) {
+                        val term1 = obj1.objectFields[field] ?: continue
+                        term1 as GraphPrimitive
+                        put(term2.term, term1.term)
+                    }
                 }
             }
         }
