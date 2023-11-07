@@ -25,6 +25,7 @@ import org.vorpal.research.kfg.ir.Class
 import org.vorpal.research.kfg.ir.Method
 import org.vorpal.research.kfg.ir.value.Constant
 import org.vorpal.research.kfg.ir.value.instruction.Instruction
+import org.vorpal.research.kfg.ir.value.instruction.NewInst
 import org.vorpal.research.kfg.ir.value.instruction.ReturnInst
 import org.vorpal.research.kfg.type.NullType
 import org.vorpal.research.kthelper.assert.unreachable
@@ -43,6 +44,31 @@ class MethodAbstractlyInvocator(
     private val allObjectsBefore = mutableMapOf<Term, GraphVertex>()
     private val invocationPaths = mutableListOf<CallResult>()
     private val termsOfFieldsBefore = MutableFieldContainer()
+
+    private fun addDefaultFields(objectTerm: Term, statePredicates: MutableList<Predicate>) {
+        val fields = buildList {
+            var klass: Class? = (objectTerm.type as KexClass).kfgClass(cm.type)
+            while (klass != null) {
+                addAll(klass.fields)
+                klass = klass.superClass
+            }
+        }
+        for (f in fields) {
+            if (f.isStatic) {
+                continue
+            }
+            val default = f.defaultValue
+            val value = if (default == null) {
+                cm.value.getZero(f.type) as? Constant ?: unreachable("getZero returned not constant")
+            } else {
+                default as? Constant ?: unreachable("default value is not constant")
+            }
+            val term = const(value)
+            statePredicates.add(state {
+                objectTerm.field(f.type.symbolicType, f.name).store(term)
+            })
+        }
+    }
 
     fun getGeneratedInvocationPaths() = invocationPaths
 
@@ -155,7 +181,7 @@ class MethodAbstractlyInvocator(
                 obj as GraphObject
                 if (thisArg != obj && !arguments.any { it is ObjectArgument && it.obj == obj }) {
                     statePredicates.add(state { objectTerm.new() })
-                    addDefaultFields(objectTerm)
+                    addDefaultFields(objectTerm, statePredicates)
                 }
                 nullCheckPredicates.add(path { (objectTerm eq null) equality false })
                 addFieldsTo(obj.objectFields.mapValues {
@@ -169,34 +195,9 @@ class MethodAbstractlyInvocator(
 //                addFieldsTo(obj.primitiveFields, objectTerm)
             }
             if (isConstructor) {
-                addDefaultFields(`this`(rootMethod.klass.symbolicClass))
+                addDefaultFields(`this`(rootMethod.klass.symbolicClass), statePredicates)
             }
             return terms
-        }
-
-        private fun addDefaultFields(objectTerm: Term) {
-            val fields = buildList {
-                var klass: Class? = (objectTerm.type as KexClass).kfgClass(cm.type)
-                while (klass != null) {
-                    addAll(klass.fields)
-                    klass = klass.superClass
-                }
-            }
-            for (f in fields) {
-                if (f.isStatic) {
-                    continue
-                }
-                val default = f.defaultValue
-                val value = if (default == null) {
-                    cm.value.getZero(f.type) as? Constant ?: unreachable("getZero returned not constant")
-                } else {
-                    default as? Constant ?: unreachable("default value is not constant")
-                }
-                val term = const(value)
-                statePredicates.add(state {
-                    objectTerm.field(f.type.symbolicType, f.name).store(term)
-                })
-            }
         }
 
         private fun addFieldsTo(fieldsToAdd: Map<Pair<String, KexType>, Term>, objectTerm: Term) {
@@ -345,8 +346,8 @@ class MethodAbstractlyInvocator(
     ) {
         obj.objectFields = buildMap {
             for ((field, descriptorTo) in descriptor.fields) {
-                val (fieldName, fieldType) = field
-                if (fieldType.isGraphObject) {
+                val fieldName = field.first
+                if (descriptorTo == ConstantDescriptor.Null || descriptorTo.type.isGraphObject) {
                     put(field, mapping.getValue(descriptorTo))
                 } else {
                     put(field, GraphPrimitive(fields.getField(representer to fieldName)))
@@ -456,5 +457,20 @@ class MethodAbstractlyInvocator(
             }
         }
         return allDescriptors
+    }
+
+    override suspend fun traverseNewInst(inst: NewInst) = acquireState { traverserState ->
+        val resultTerm = generate(inst.type.symbolicType)
+        val clauses = buildList {
+            add(state { resultTerm.new() })
+            addDefaultFields(resultTerm, this)
+        }.map { StateClause(inst, it) }
+        currentState = traverserState.copy(
+            symbolicState = traverserState.symbolicState + ClauseListImpl(clauses),
+            typeInfo = traverserState.typeInfo.put(resultTerm, inst.type.rtMapped),
+            valueMap = traverserState.valueMap.put(inst, resultTerm),
+            nullCheckedTerms = traverserState.nullCheckedTerms.add(resultTerm),
+            typeCheckedTerms = traverserState.typeCheckedTerms.put(resultTerm, inst.type)
+        )
     }
 }
