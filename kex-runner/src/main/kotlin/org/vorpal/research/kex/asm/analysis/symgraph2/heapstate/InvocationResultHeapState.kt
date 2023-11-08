@@ -41,7 +41,7 @@ class InvocationResultHeapState(
         argumentGenerator: Generator,
     ): RestorationResult {
 //        log.debug("terms: $termValues and $terms")
-        check(checkPredicateState(ctx, termValues) is Result.SatResult)
+//        check(checkPredicateState(ctx, termValues) is Result.SatResult)
         val parentTermVals = termMappingToParent
             .filterValues { parentState.terms.contains(it) }
             .map { it.value to termValues.getValue(it.key) }

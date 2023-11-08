@@ -237,11 +237,13 @@ class MethodAbstractlyInvocator(
         val stackTraceElement = stackTrace.lastOrNull()
         val receiver = stackTraceElement?.instruction
         if (receiver == null) {
-//            println("Return Instruction for method: $rootMethod")
             val result = check(rootMethod, traverserState.symbolicState)
             if (result != null) {
                 val returnTerm = when {
-                    inst.hasReturnValue && inst.returnType.kexType.isGraphObject -> traverserState.mkTerm(inst.returnValue)
+                    inst.hasReturnValue
+                            && inst.returnType.kexType !is KexNull
+                            && inst.returnType.kexType.isGraphObject -> traverserState.mkTerm(inst.returnValue)
+
                     rootMethod.isConstructor -> traverserState.mkTerm(values.getThis(rootMethod.klass))
                     else -> null
                 }
@@ -251,7 +253,15 @@ class MethodAbstractlyInvocator(
                     traverserState.symbolicState,
                 )
                 log.debug("Add new path: descriptors = $objectDescriptors, predicateState = $fullPredicateState, absCall = ${contextAbsCall}")
-                report_(fullPredicateState, objectDescriptors, returnTerm?.let { objectDescriptors[it] })
+                report_(fullPredicateState, objectDescriptors, returnTerm?.let {
+                    objectDescriptors[it]?.let { descriptor ->
+                        if (descriptor == ConstantDescriptor.Null || !descriptor.type.isGraphObject) {
+                            null
+                        } else {
+                            descriptor
+                        }
+                    }
+                })
             }
             currentState = null
         } else {
