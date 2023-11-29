@@ -41,7 +41,7 @@ class GUIProxySelector(private val concolicPathSelector: ConcolicPathSelector) :
     override suspend fun isEmpty(): Boolean = concolicPathSelector.isEmpty()
 
     override suspend fun addExecutionTrace(method: Method, result: ExecutionCompletedResult) {
-        val vertices = graph.addTrace(result.trace.toPersistentState())
+        val vertices = graph.addTrace(result.symbolicState.toPersistentState())
         val json = Json.encodeToString(vertices)
         log.debug("Vertices trace: $json")
         log.debug(graph)
@@ -75,7 +75,8 @@ class GUIProxySelector(private val concolicPathSelector: ConcolicPathSelector) :
         return persistentSymbolicState(
             clauses,
             path + revertedClause,
-            state.concreteValueMap,
+            state.concreteTypes,
+            state.concreteValues,
             state.termMap
         )
     }

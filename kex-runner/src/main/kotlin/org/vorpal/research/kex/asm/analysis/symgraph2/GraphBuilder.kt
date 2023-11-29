@@ -91,7 +91,7 @@ class GraphBuilder(val ctx: ExecutionContext, klasses: Set<Class>) : TermBuilder
             log.debug("Timeout on checking the full path's predicate for call: $c")
             null
         }
-        if (result == null || result == Result.UnsatResult) {
+        if (result == null || result is Result.UnsatResult) {
             return null
         }
         val namedTerms = buildSet {
