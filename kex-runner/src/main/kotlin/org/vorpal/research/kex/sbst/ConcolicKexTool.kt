@@ -85,7 +85,7 @@ class ConcolicKexTool : Tool {
             executePipeline(cm, target) {
                 +SystemExitTransformer(cm)
                 +ClassInstantiationDetector(context)
-                +SymbolicTraceInstrumenter(context)
+                +SymbolicTraceInstrumenter(cm)
                 +ClassWriter(context, path)
             }
         }

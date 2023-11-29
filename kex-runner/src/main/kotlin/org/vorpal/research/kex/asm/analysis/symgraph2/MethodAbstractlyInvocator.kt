@@ -1,6 +1,8 @@
 package org.vorpal.research.kex.asm.analysis.symgraph2
 
 import kotlinx.collections.immutable.*
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.yield
 import org.vorpal.research.kex.ExecutionContext
 import org.vorpal.research.kex.asm.analysis.symbolic.*
@@ -133,31 +135,31 @@ class MethodAbstractlyInvocator(
         val initialNullCheckTerms = objectTerms.filterValues { it.type !is KexNull }.values.toPersistentSet()
         val initialTypeCheckedTerms = initialTypeInfo
         val firstInstruction = rootMethod.body.entry.instructions.first()
-        pathSelector.add(
-            TraverserState(
-                symbolicState = persistentSymbolicState(
-                    state = statePredicates.map { StateClause(firstInstruction, it) }.toPersistentClauseState(),
-                    path = nullCheckPredicates.map {
-                        PathClause(PathClauseType.NULL_CHECK, firstInstruction, it)
-                    }.toPersistentPathCondition(),
-                ),
-                valueMap = initialArguments.toPersistentMap(),
-                stackTrace = persistentListOf(),
-                typeInfo = initialTypeInfo,
-                blockPath = persistentListOf(),
-                nullCheckedTerms = initialNullCheckTerms,
-                boundCheckedTerms = persistentSetOf(),
-                typeCheckedTerms = initialTypeCheckedTerms
-            ), rootMethod.body.entry
+
+        val initialState = TraverserState(
+            symbolicState = persistentSymbolicState(
+                state = statePredicates.map { StateClause(firstInstruction, it) }.toPersistentClauseState(),
+                path = nullCheckPredicates.map {
+                    PathClause(PathClauseType.NULL_CHECK, firstInstruction, it)
+                }.toPersistentPathCondition(),
+            ),
+            valueMap = initialArguments.toPersistentMap(),
+            stackTrace = persistentListOf(),
+            typeInfo = initialTypeInfo,
+            blockPath = persistentListOf(),
+            nullCheckedTerms = initialNullCheckTerms,
+            boundCheckedTerms = persistentSetOf(),
+            typeCheckedTerms = initialTypeCheckedTerms
         )
-
         log.debug("Running method $rootMethod: ${rootMethod.body}")
+        withContext(currentCoroutineContext()) {
+            pathSelector += initialState to rootMethod.body.entry
 
-        while (pathSelector.hasNext()) {
-            val (currentState, currentBlock) = pathSelector.next()
-            this@MethodAbstractlyInvocator.currentState = currentState
-            traverseBlock(currentBlock)
-            yield()
+            while (pathSelector.hasNext()) {
+                val (currentState, currentBlock) = pathSelector.next()
+                traverseBlock(currentState, currentBlock)
+                yield()
+            }
         }
     }
 
@@ -218,8 +220,10 @@ class MethodAbstractlyInvocator(
         val checker = AsyncChecker(method, ctx)
         val clauses = state.clauses.asState()
         val query = state.path.asState()
-        val concreteTypeInfo = state.concreteValueMap.mapValues { it.value.type }.filterValues { it.isJavaRt }
-            .mapValues { it.value.rtMapped }.toTypeMap()
+        val concreteTypeInfo = state.concreteTypes
+            .filterValues { it.isJavaRt }
+            .mapValues { it.value.rtMapped }
+            .toTypeMap()
         val result = checker.prepareAndCheck(method, clauses + query, concreteTypeInfo)
         check(result is Result.SatResult) {
             "result = ${result.javaClass}"
@@ -231,12 +235,12 @@ class MethodAbstractlyInvocator(
         return descriptors to checker.state
     }
 
-    override suspend fun traverseReturnInst(inst: ReturnInst) {
-        val traverserState = currentState ?: return
+    override suspend fun traverseReturnInst(traverserState: TraverserState, inst: ReturnInst): TraverserState? {
         val stackTrace = traverserState.stackTrace
         val stackTraceElement = stackTrace.lastOrNull()
         val receiver = stackTraceElement?.instruction
-        if (receiver == null) {
+        return if (receiver == null) {
+//            println("Return Instruction for method: $rootMethod")
             val result = check(rootMethod, traverserState.symbolicState)
             if (result != null) {
                 val returnTerm = when {
@@ -261,9 +265,9 @@ class MethodAbstractlyInvocator(
                     }
                 })
             }
-            currentState = null
+            null
         } else {
-            super.traverseReturnInst(inst)
+            super.traverseReturnInst(traverserState, inst)
         }
     }
 
@@ -467,13 +471,13 @@ class MethodAbstractlyInvocator(
         return allDescriptors
     }
 
-    override suspend fun traverseNewInst(inst: NewInst) = acquireState { traverserState ->
+    override suspend fun traverseNewInst(traverserState: TraverserState, inst: NewInst): TraverserState? {
         val resultTerm = generate(inst.type.symbolicType)
         val clauses = buildList {
             add(state { resultTerm.new() })
             addDefaultFields(resultTerm, this)
         }.map { StateClause(inst, it) }
-        currentState = traverserState.copy(
+        return traverserState.copy(
             symbolicState = traverserState.symbolicState + ClauseListImpl(clauses),
             typeInfo = traverserState.typeInfo.put(resultTerm, inst.type.rtMapped),
             valueMap = traverserState.valueMap.put(inst, resultTerm),
