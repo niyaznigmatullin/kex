@@ -240,9 +240,7 @@ class MethodAbstractlyInvocator(
             val result = check(rootMethod, traverserState.symbolicState)
             if (result != null) {
                 val returnTerm = when {
-                    inst.hasReturnValue
-                            && inst.returnType.kexType !is KexNull
-                            && inst.returnType.kexType.isGraphObject -> traverserState.mkTerm(inst.returnValue)
+                    inst.hasReturnValue -> traverserState.mkTerm(inst.returnValue)
 
                     rootMethod.isConstructor -> traverserState.mkTerm(values.getThis(rootMethod.klass))
                     else -> null
