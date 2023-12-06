@@ -32,14 +32,16 @@
 
     <logger name="org.reflections.Reflections" level="error"
             additivity="false">
-        <appender-ref ref="STDOUT"/>
+        <appender-ref ref="STDOUT" />
     </logger>
 
     <logger name="org.vorpal.research" level="ALL" additivity="false">
-        <appender-ref ref="asyncFileLogger"/>
+        <appender-ref ref="kexSiftingFileLogger"/>
     </logger>
 
-    <logger name="ch.qos.logback" level="ALL" additivity="false">
-        <appender-ref ref="asyncFileLogger"/>
-    </logger>
+    <logger name="ch.qos.logback" level="OFF"/>
+
+    <root level="ALL">
+        <appender-ref ref="kexSiftingFileLogger"/>
+    </root>
 </configuration>

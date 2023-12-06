@@ -1264,7 +1264,6 @@ abstract class SymbolicTraverser(
         )
         generator.generate(parameters)
         val testFile = generator.emit()
-        log.debug("Emitted test file $testFile")
         return try {
             compilerHelper.compileFile(testFile)
             true

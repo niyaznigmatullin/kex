@@ -41,6 +41,6 @@ class SBSTRunTool(private val tool: Tool, input: Reader, output: Writer) {
             tool.run(cName, timeBudget)
             channel.emit("READY")
         }
-        tool.finalize_()
+        tool.finalize()
     }
 }

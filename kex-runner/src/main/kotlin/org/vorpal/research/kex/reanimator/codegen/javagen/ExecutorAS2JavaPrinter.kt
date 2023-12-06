@@ -41,11 +41,8 @@ import org.vorpal.research.kfg.type.objectType
 import org.vorpal.research.kthelper.assert.unreachable
 import org.vorpal.research.kthelper.logging.log
 import org.vorpal.research.kthelper.runIf
+import kotlin.time.Duration.Companion.seconds
 
-private val generateSetup by lazy { kexConfig.getBooleanValue("testGen", "generateSetup", false) }
-private val testTimeout by lazy {
-    kexConfig.getIntValue("testGen", "testTimeout", 10) * 1000
-}
 
 class ExecutorAS2JavaPrinter(
     ctx: ExecutionContext,
@@ -54,6 +51,7 @@ class ExecutorAS2JavaPrinter(
     private val setupName: String
 ) : ActionSequence2JavaPrinter(ctx, packageName, klassName) {
     private val surroundInTryCatch = kexConfig.getBooleanValue("testGen", "surroundInTryCatch", true)
+    private val testTimeout = kexConfig.getIntValue("testGen", "testTimeout", 10).seconds
     private val testParams = mutableListOf<JavaBuilder.JavaClass.JavaField>()
     private val reflectionUtils = ReflectionUtilsPrinter.reflectionUtils(packageName)
     private val printedDeclarations = hashSetOf<String>()
@@ -148,7 +146,7 @@ class ExecutorAS2JavaPrinter(
                     exceptions += "Throwable"
                 } else method(testName) {
                     returnType = void
-                    annotations += "Test(timeout = $testTimeout)"
+                    annotations += "Test(timeout = ${testTimeout.inWholeMilliseconds})"
                     exceptions += "Throwable"
                 }
             }
