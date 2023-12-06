@@ -35,10 +35,6 @@ class ConcolicLauncher(classPaths: List<String>, targetName: String) : KexAnalys
         ExecutorMasterController.use {
             it.start(context)
 
-            executePipeline(context.cm, Package.defaultPackage) {
-                +SystemExitTransformer(context.cm)
-            }
-
             for (setOfTargets in batchedTargets) {
                 InstructionConcolicChecker.run(context, setOfTargets)
             }

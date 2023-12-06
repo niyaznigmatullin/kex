@@ -24,7 +24,6 @@ import org.vorpal.research.kfg.visitor.executePipeline
 import org.vorpal.research.kthelper.logging.log
 import java.io.File
 import java.net.URLClassLoader
-import java.nio.file.Path
 import kotlin.time.ExperimentalTime
 
 @ExperimentalTime
@@ -32,10 +31,9 @@ import kotlin.time.ExperimentalTime
 @ExperimentalSerializationApi
 @InternalSerializationApi
 class SymbolicKexTool : Tool {
-    val configFile = "kex.ini"
-    val classPath = System.getProperty("java.class.path")
-    lateinit var containers: List<Container>
-    lateinit var containerClassLoader: URLClassLoader
+    private val configFile = "kex.ini"
+    private lateinit var containers: List<Container>
+    private lateinit var containerClassLoader: URLClassLoader
     lateinit var context: ExecutionContext
 
     init {
@@ -46,16 +44,7 @@ class SymbolicKexTool : Tool {
 
     override fun getExtraClassPath(): List<File> = emptyList()
 
-    protected fun updateClassPath(loader: URLClassLoader) {
-        val urlClassPath = loader.urLs.joinToString(separator = getPathSeparator()) { "${it.path}." }
-        System.setProperty("java.class.path", "$classPath${getPathSeparator()}$urlClassPath")
-    }
-
-    protected fun clearClassPath() {
-        System.setProperty("java.class.path", classPath)
-    }
-
-    private fun prepareInstrumentedClasspath(containers: List<Container>, target: Package, path: Path) {
+    private fun prepareInstrumentedClasspath(containers: List<Container>, target: Package) {
         val klassPath = containers.map { it.path }
         for (jar in containers) {
             log.info("Preparing ${jar.path}")
@@ -71,13 +60,10 @@ class SymbolicKexTool : Tool {
             cm.initialize(jar)
             val context = ExecutionContext(
                 cm,
-//                target,
                 containerClassLoader,
                 EasyRandomDriver(),
                 klassPath
             )
-
-            jar.unpack(cm, path, true)
 
             executePipeline(cm, target) {
                 +ClassInstantiationDetector(context)
@@ -96,8 +82,7 @@ class SymbolicKexTool : Tool {
         }.toTypedArray(), getKexRuntime())
         val analysisJars = listOfNotNull(*containers.toTypedArray(), getRuntime(), getIntrinsics())
 
-        val instrumentedCodeDir = kexConfig.instrumentedCodeDirectory
-        prepareInstrumentedClasspath(analysisJars, Package.defaultPackage, instrumentedCodeDir)
+        prepareInstrumentedClasspath(analysisJars, Package.defaultPackage)
 
         val cm = ClassManager(
             KfgConfig(
@@ -111,15 +96,12 @@ class SymbolicKexTool : Tool {
         cm.initialize(*analysisJars.toTypedArray())
 
         val accessLevel = AccessModifier.Private
-        log.debug("Access level: $accessLevel")
+        log.debug("Access level: {}", accessLevel)
 
-        // write all classes to output directory, so they will be seen by ClassLoader
-        val classLoader = URLClassLoader(arrayOf(instrumentedCodeDir.toUri().toURL()))
 
         val klassPath = containers.map { it.path }
-        updateClassPath(classLoader)
         val randomDriver = EasyRandomDriver()
-        context = ExecutionContext(cm, /*Package.defaultPackage, */classLoader, randomDriver, klassPath, accessLevel)
+        context = ExecutionContext(cm, containerClassLoader, randomDriver, klassPath, accessLevel)
 
         log.debug("Running with class path:\n${containers.joinToString("\n") { it.name }}")
     }
@@ -129,17 +111,16 @@ class SymbolicKexTool : Tool {
 
         val canonicalName = className.replace('.', '/')
         val klass = context.cm[canonicalName]
-        log.debug("Running on klass $klass")
+        log.debug("Running on klass {}", klass)
         try {
             InstructionSymbolicCheckerGraph.run(context, klass.allMethods.filter { !it.isPrivate && !it.isConstructor }.toSet())
         } catch (e: Throwable) {
             log.error("Error: ", e)
         }
 
-        log.debug("Analyzed klass $klass")
+        log.debug("Analyzed klass {}", klass)
     }
 
-    override fun finalize_() {
-        clearClassPath()
+    override fun finalize() {
     }
 }
