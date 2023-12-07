@@ -19,11 +19,11 @@ import org.vorpal.research.kex.state.PredicateState
 import org.vorpal.research.kex.state.fields.FieldContainer
 import org.vorpal.research.kex.state.fields.MutableFieldContainer
 import org.vorpal.research.kex.state.predicate.*
-import org.vorpal.research.kex.state.term.NullTerm
 import org.vorpal.research.kex.state.term.Term
 import org.vorpal.research.kex.state.transformer.*
 import org.vorpal.research.kex.trace.symbolic.*
 import org.vorpal.research.kfg.ir.Class
+import org.vorpal.research.kfg.ir.Field
 import org.vorpal.research.kfg.ir.Method
 import org.vorpal.research.kfg.ir.value.Constant
 import org.vorpal.research.kfg.ir.value.instruction.Instruction
@@ -47,7 +47,24 @@ class MethodAbstractlyInvocator(
     private val invocationPaths = mutableListOf<CallResult>()
     private val termsOfFieldsBefore = MutableFieldContainer()
 
-    private fun addDefaultFields(objectTerm: Term, statePredicates: MutableList<Predicate>) {
+    private fun storeDefaultFields(objectTerm: Term, statePredicates: MutableList<Predicate>) {
+        addDefaultFields(objectTerm) { f, term ->
+            statePredicates.add(state {
+                objectTerm.field(f.type.symbolicType, f.name).store(term)
+            })
+        }
+    }
+
+    private fun initializeDefaultFields(objectTerm: Term, statePredicates: MutableList<Predicate>) {
+        addDefaultFields(objectTerm) { f, term ->
+            statePredicates.add(state {
+                objectTerm.field(f.type.symbolicType, f.name).load() equality term
+            })
+            termsOfFieldsBefore.setField(objectTerm to f.name, term)
+        }
+    }
+
+    private fun addDefaultFields(objectTerm: Term, processField: (Field, Term) -> Unit) {
         val fields = buildList {
             var klass: Class? = (objectTerm.type as KexClass).kfgClass(cm.type)
             while (klass != null) {
@@ -65,10 +82,7 @@ class MethodAbstractlyInvocator(
             } else {
                 default as? Constant ?: unreachable("default value is not constant")
             }
-            val term = const(value)
-            statePredicates.add(state {
-                objectTerm.field(f.type.symbolicType, f.name).store(term)
-            })
+            processField(f, const(value))
         }
     }
 
@@ -82,7 +96,7 @@ class MethodAbstractlyInvocator(
         if (thisArg == GraphValue.Null && (!rootMethod.isStatic && !rootMethod.isConstructor)) {
             return
         }
-        val initializer = ObjectInitializer(heapState.objects, thisArg, arguments, rootMethod.isConstructor)
+        val initializer = ObjectInitializer(heapState.objects, rootMethod.isConstructor)
         val objectTerms = initializer.generateObjectTerms()
         val statePredicates = initializer.statePredicates
         val nullCheckPredicates = initializer.nullCheckPredicates
@@ -92,7 +106,6 @@ class MethodAbstractlyInvocator(
         activeObjectsBefore.clear()
         activeObjectsBefore.putAll(allObjectsBefore.filterValues { it in heapState.activeObjects })
         invocationPaths.clear()
-//        println(clauses)
         val thisValue = values.getThis(rootMethod.klass)
         val initialArguments = buildMap {
             val values = this@MethodAbstractlyInvocator.values
@@ -113,12 +126,8 @@ class MethodAbstractlyInvocator(
                 }
             }
         }
-        val thisAndArgs = buildSet {
-            add(objectTerms.getValue(thisArg))
-            addAll(arguments.filterIsInstance<ObjectArgument>().map { objectTerms.getValue(it.obj) })
-        }
-        for (x in thisAndArgs) {
-            for (y in thisAndArgs) {
+        for (x in objectTerms.values) {
+            for (y in objectTerms.values) {
                 if (x == y) break
                 statePredicates.add(state {
                     x inequality y
@@ -165,8 +174,6 @@ class MethodAbstractlyInvocator(
 
     inner class ObjectInitializer(
         private val objects: Collection<GraphVertex>,
-        private val thisArg: GraphVertex,
-        private val arguments: List<Argument>,
         private val isConstructor: Boolean,
     ) {
         val statePredicates = mutableListOf<Predicate>()
@@ -181,10 +188,7 @@ class MethodAbstractlyInvocator(
             }
             for ((obj, objectTerm) in terms.filter { it.key != GraphValue.Null }) {
                 obj as GraphObject
-                if (thisArg != obj && !arguments.any { it is ObjectArgument && it.obj == obj }) {
-                    statePredicates.add(state { objectTerm.new() })
-                    addDefaultFields(objectTerm, statePredicates)
-                }
+                initializeDefaultFields(objectTerm, statePredicates)
                 nullCheckPredicates.add(path { (objectTerm eq null) equality false })
                 addFieldsTo(obj.objectFields.mapValues {
                     val v = it.value
@@ -194,10 +198,9 @@ class MethodAbstractlyInvocator(
                         else -> unreachable("unexpected type ${v.javaClass}")
                     }
                 }, objectTerm)
-//                addFieldsTo(obj.primitiveFields, objectTerm)
             }
             if (isConstructor) {
-                addDefaultFields(`this`(rootMethod.klass.symbolicClass), statePredicates)
+                storeDefaultFields(`this`(rootMethod.klass.symbolicClass), statePredicates)
             }
             return terms
         }
@@ -231,7 +234,6 @@ class MethodAbstractlyInvocator(
         val descriptors = generateFinalObjectsState(method, ctx, result.model, checker.state).mapValues {
             it.value.concretize(cm, ctx.accessLevel, ctx.random)
         }
-//        log.debug("Add new path model: model = ${result.model}, absCall = $contextAbsCall, predicateState = ${checker.state}")
         return descriptors to checker.state
     }
 
@@ -240,7 +242,6 @@ class MethodAbstractlyInvocator(
         val stackTraceElement = stackTrace.lastOrNull()
         val receiver = stackTraceElement?.instruction
         return if (receiver == null) {
-//            println("Return Instruction for method: $rootMethod")
             val result = check(rootMethod, traverserState.symbolicState)
             if (result != null) {
                 val returnTerm = when {
@@ -249,7 +250,6 @@ class MethodAbstractlyInvocator(
                     rootMethod.isConstructor -> traverserState.mkTerm(values.getThis(rootMethod.klass))
                     else -> null
                 }
-//                println("objectsToLookAfter = $objectsToLookAfter")
                 val (objectDescriptors, fullPredicateState) = checkAsyncAndGetReturn(
                     rootMethod,
                     traverserState.symbolicState,
@@ -282,7 +282,6 @@ class MethodAbstractlyInvocator(
     ) {
         val activeDescriptors = getActiveDescriptors(objectDescriptors, returnDescriptor)
         val allDescriptors = findAllReachableDescriptors(activeDescriptors) ?: return
-//        val newObjects = collectNewObjectTerms(predicateState)
         val representerObjects = buildMap<Descriptor, Term> {
             for ((term, descriptor) in objectDescriptors.filterValues { it is ObjectDescriptor && it.type.isGraphObject }) {
                 val has = get(descriptor)
@@ -291,10 +290,6 @@ class MethodAbstractlyInvocator(
                 }
             }
         }.values.toSet()
-//        val representerObjects = buildSet {
-//            addAll(allObjectsBefore.keys)
-//            addAll(newObjects)
-//        }
         val representersByDescriptor = representerObjects.associateBy {
             objectDescriptors.getValue(it)
         }
@@ -366,30 +361,7 @@ class MethodAbstractlyInvocator(
                 }
             }
         }
-//        obj.primitiveFields = buildMap {
-//            for ((field, _) in descriptor.fields) {
-//                val (fieldName, fieldType) = field
-//                if (!fieldType.isGraphObject) {
-//                    put(field, fields.getField(representer to fieldName))
-//                }
-//            }
-//        }
     }
-
-//    private fun convertArgsToFreeTerms(state: PredicateState): Pair<Collection<Term>, PredicateState> {
-//        val arguments = rootMethod.argTypes.withIndex()
-//            .filter { it.value.kexType !is KexClass }
-//            .associate { it.index to generate(it.value.kexType) }
-//        val replacer = ArgumentReplacer(arguments)
-//        val newState = replacer.apply(state)
-//        return arguments.values to newState
-//    }
-//
-//    class ArgumentReplacer(private val mapping: Map<Int, Term>) : Transformer<ArgumentReplacer> {
-//        override fun transformArgument(term: ArgumentTerm): Term {
-//            return mapping[term.index] ?: term
-//        }
-//    }
 
 
     private fun removeNonInterestingPredicates(ps: PredicateState): PredicateState {
@@ -407,21 +379,6 @@ class MethodAbstractlyInvocator(
 
         override fun transformNew(predicate: NewPredicate): Predicate {
             return nothing()
-        }
-    }
-
-    private fun collectNewObjectTerms(predicateState: PredicateState): Set<Term> {
-        val collector = PredicateTermCollector { it is NewPredicate || it is NewInitializerPredicate }
-        collector.apply(predicateState)
-        return if (!rootMethod.isConstructor) {
-            collector.terms
-        } else {
-            val thisCollector = TermCollector { it.name == "this" }
-            thisCollector.apply(predicateState)
-            buildSet {
-                addAll(collector.terms)
-                addAll(thisCollector.terms)
-            }
         }
     }
 
@@ -452,7 +409,6 @@ class MethodAbstractlyInvocator(
                 }
 
                 is ArrayDescriptor -> {
-//                    obj.elements.map { (_, descriptor) -> descriptor }
                     if (obj.elementType.isGraphObject)
                         return null
                     else
@@ -475,7 +431,7 @@ class MethodAbstractlyInvocator(
         val resultTerm = generate(inst.type.symbolicType)
         val clauses = buildList {
             add(state { resultTerm.new() })
-            addDefaultFields(resultTerm, this)
+            storeDefaultFields(resultTerm, this)
         }.map { StateClause(inst, it) }
         return traverserState.copy(
             symbolicState = traverserState.symbolicState + ClauseListImpl(clauses),
