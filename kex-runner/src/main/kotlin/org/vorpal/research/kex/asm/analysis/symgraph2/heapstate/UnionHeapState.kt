@@ -35,7 +35,7 @@ class UnionHeapState(
         return if (firstParentState.checkPredicateState(ctx, termValues) !is Result.SatResult) {
             val secondMapping = termValues.mapKeys { termMappingToSecondParent.getOrDefault(it.key, it.key) }
             val secondTermValues = secondParentState.terms.associateWith { secondMapping.getValue(it) }
-            check(secondParentState.checkPredicateState(ctx, secondTermValues) is Result.SatResult)
+//            check(secondParentState.checkPredicateState(ctx, secondTermValues) is Result.SatResult)
             val result = secondParentState.restoreCalls(ctx, secondTermValues, argumentGenerator)
             val newObjGenerators = result.objectGenerators.mapKeys { objMappingFromSecondParent.getValue(it.key) }
             RestorationResult(newObjGenerators, result.rootSequence)

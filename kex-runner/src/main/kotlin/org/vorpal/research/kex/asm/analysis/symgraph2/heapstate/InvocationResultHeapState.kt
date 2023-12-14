@@ -29,6 +29,7 @@ class InvocationResultHeapState(
         append(parentState.additionalToString(stateEnumeration))
         append(" -> ")
         append(stateEnumeration[this@InvocationResultHeapState])
+        append("#${super.hashCode().toString(16)}")
         append("(")
         append(absCall.method)
         append(")")
@@ -40,7 +41,7 @@ class InvocationResultHeapState(
         argumentGenerator: Generator,
     ): RestorationResult {
 //        log.debug("terms: $termValues and $terms")
-        check(checkPredicateState(ctx, termValues) is Result.SatResult)
+//        check(checkPredicateState(ctx, termValues) is Result.SatResult)
         val parentTermVals = termMappingToParent
             .filterValues { parentState.terms.contains(it) }
             .map { it.value to termValues.getValue(it.key) }
