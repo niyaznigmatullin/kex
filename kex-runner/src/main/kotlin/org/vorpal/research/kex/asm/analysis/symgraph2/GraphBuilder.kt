@@ -98,7 +98,8 @@ class GraphBuilder(val ctx: ExecutionContext, klasses: Set<Class>) : TermBuilder
             addAll(collectTerms(predicateState) { it.isNamed })
             for (obj in p.objects) {
                 when (obj) {
-                    is GraphObject -> addAll(obj.primitiveFields.values.filter { it.isNamed })
+                    is GraphObject -> addAll(obj.objectFields.values.filterIsInstance<GraphPrimitive>().map { it.term }
+                        .filter { it.isNamed })
                 }
             }
             for ((index, arg) in c.arguments.withIndex()) {
@@ -189,16 +190,16 @@ class GraphBuilder(val ctx: ExecutionContext, klasses: Set<Class>) : TermBuilder
 
         private fun getAllObjectsOfSubtype(type: Type): List<GraphVertex> {
             return state.activeObjects.filter {
-                it.type.isSubtypeOf(this@GraphBuilder.types, type.kexType) || it == GraphVertex.Null
+                it.type.isSubtypeOf(this@GraphBuilder.types, type.kexType) || it == GraphValue.Null
             }
         }
 
         private fun backtrack(currentArgumentIndex: Int) {
             if (currentArgumentIndex == m.argTypes.size) {
                 val thisCandidates = if (m.isStatic || m.isConstructor) {
-                    listOf(GraphVertex.Null)
+                    listOf(GraphValue.Null)
                 } else {
-                    getAllObjectsOfSubtype(m.klass.asType).filter { it != GraphVertex.Null }
+                    getAllObjectsOfSubtype(m.klass.asType).filter { it != GraphValue.Null }
                 }
                 for (thisArg in thisCandidates) {
                     callsList.add(AbsCall(m, thisArg, argumentsList.toList()))
@@ -258,7 +259,7 @@ class GraphBuilder(val ctx: ExecutionContext, klasses: Set<Class>) : TermBuilder
     private fun HeapState.buildSymbolicState(): HeapSymbolicState {
         val objectTerms = buildMap {
             for (v in objects) {
-                val term = if (v == GraphVertex.Null) {
+                val term = if (v == GraphValue.Null) {
                     const(null)
                 } else {
                     generate(v.type)
@@ -280,11 +281,16 @@ class GraphBuilder(val ctx: ExecutionContext, klasses: Set<Class>) : TermBuilder
                     continue
                 }
                 for ((field, fieldValue) in obj.objectFields) {
-                    add(path { term.field(field).load() equality objectTerms.getValue(fieldValue) })
+                    when (fieldValue) {
+                        is GraphPrimitive -> add(path { term.field(field).load() equality fieldValue.term })
+                        is GraphVertex -> add(path {
+                            term.field(field).load() equality objectTerms.getValue(fieldValue)
+                        })
+                    }
                 }
-                for ((field, fieldValue) in obj.primitiveFields) {
-                    add(path { term.field(field).load() equality fieldValue })
-                }
+//                for ((field, fieldValue) in obj.primitiveFields) {
+//                    add(path { term.field(field).load() equality fieldValue })
+//                }
             }
         }
         return HeapSymbolicState(this, predicateState + BasicState(predicates), objectTerms)

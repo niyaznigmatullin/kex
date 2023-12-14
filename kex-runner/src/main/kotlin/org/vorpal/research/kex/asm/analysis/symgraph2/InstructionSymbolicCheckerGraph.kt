@@ -9,6 +9,9 @@ import org.vorpal.research.kex.compile.CompilationException
 import org.vorpal.research.kex.config.kexConfig
 import org.vorpal.research.kex.descriptor.Descriptor
 import org.vorpal.research.kex.parameters.Parameters
+import org.vorpal.research.kex.parameters.concreteParameters
+import org.vorpal.research.kex.parameters.filterIgnoredStatic
+import org.vorpal.research.kex.parameters.filterStaticFinals
 import org.vorpal.research.kex.reanimator.SymGraphGenerator
 import org.vorpal.research.kex.reanimator.UnsafeGenerator
 import org.vorpal.research.kex.reanimator.codegen.klassName
@@ -30,6 +33,7 @@ import org.vorpal.research.kfg.ir.value.Value
 import org.vorpal.research.kfg.ir.value.instruction.Instruction
 import org.vorpal.research.kfg.ir.value.instruction.ReturnInst
 import org.vorpal.research.kfg.type.ClassType
+import org.vorpal.research.kthelper.logging.debug
 import org.vorpal.research.kthelper.logging.log
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.ExperimentalTime
@@ -163,7 +167,7 @@ class InstructionSymbolicCheckerGraph(
                     generator.apply(changedState)
                     val thisParameter = absCall.thisArg.let {
                         when (it) {
-                            GraphVertex.Null -> null
+                            GraphValue.Null -> null
                             else -> ObjectArgument(it)
                         }
                     }
@@ -190,7 +194,16 @@ class InstructionSymbolicCheckerGraph(
                         }
                     }
                     // Not required, `descriptors` is generated only for fallback UnsafeGenerator
-                    val descriptors = generateInitialDescriptors(rootMethod, ctx, result.model, changedState)
+                    val descriptors = generateInitialDescriptors(
+                        rootMethod,
+                        ctx,
+                        result.model,
+                        changedState
+                    ).concreteParameters(ctx.cm, ctx.accessLevel, ctx.random).also {
+                        log.debug { "Generated params:\n$it" }
+                    }
+                        .filterStaticFinals(ctx.cm)
+                        .filterIgnoredStatic()
                     return GraphTestCase(parameters, graphState.heapState, termValues, descriptors)
                 } else {
                     log.debug(

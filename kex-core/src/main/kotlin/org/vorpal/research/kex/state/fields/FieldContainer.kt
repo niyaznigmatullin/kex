@@ -8,6 +8,8 @@ open class FieldContainer(
 ) {
     fun getField(field: Pair<Term, String>) = fields.getValue(field)
 
+    fun containsField(field: Pair<Term, String>) = fields.containsKey(field)
+
     fun getElement(element: Pair<Term, Int>) = elements.getValue(element)
 
     fun toMutableFieldContainer() = MutableFieldContainer(fields.toMutableMap(), elements.toMutableMap())
@@ -17,6 +19,12 @@ open class FieldContainer(
             it.key.toString() + "->" + it.value.toString()
         }.joinToString(", ")
         return "FieldContainer{fields=[${fieldsRepr}]}"
+    }
+
+    fun mapOwners(map: Map<Term, Term>): FieldContainer {
+        return FieldContainer(
+            fields.mapKeys { map.getValue(it.key.first) to it.key.second },
+            elements.mapKeys { map.getValue(it.key.first) to it.key.second })
     }
 }
 

@@ -30,7 +30,7 @@ class SymGraphLauncher(classPaths: List<String>, targetName: String) : KexAnalys
 
     override fun launch() {
         for (setOfTargets in batchedTargets) {
-            InstructionSymbolicCheckerGraph.run(context, setOfTargets)
+            InstructionSymbolicCheckerGraph.run(context, setOfTargets.filter { !it.isConstructor }.toSet())
         }
 
         val coverageInfo = CoverageReporter(containers).execute(context.cm, analysisLevel)
