@@ -220,21 +220,19 @@ class InstructionSymbolicCheckerGraph(
         return Pair(arguments, thisTerm)
     }
 
-    override suspend fun traverseReturnInst(inst: ReturnInst) {
-        val traverserState = currentState ?: return
+    override suspend fun traverseReturnInst(traverserState: TraverserState, inst: ReturnInst): TraverserState? {
         val stackTrace = traverserState.stackTrace
         val stackTraceElement = stackTrace.lastOrNull()
         val receiver = stackTraceElement?.instruction
-        if (receiver == null) {
+        return if (receiver == null) {
             log.debug("Return Instruction for method: $rootMethod")
             val result = findParameters(traverserState)
             if (result != null) {
                 createTestGenerationTask(result, "sh")
             }
-            currentState = null
-//            super.traverseReturnInst(inst)
+            null
         } else {
-            super.traverseReturnInst(inst)
+            super.traverseReturnInst(traverserState, inst)
         }
     }
 
