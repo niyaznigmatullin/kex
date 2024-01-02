@@ -15,7 +15,7 @@ import org.vorpal.research.kex.ktype.KexRtManager.rtMapped
 import org.vorpal.research.kex.parameters.Parameters
 import org.vorpal.research.kex.smt.AsyncChecker
 import org.vorpal.research.kex.smt.Result
-import org.vorpal.research.kex.state.PredicateState
+import org.vorpal.research.kex.state.*
 import org.vorpal.research.kex.state.fields.FieldContainer
 import org.vorpal.research.kex.state.fields.MutableFieldContainer
 import org.vorpal.research.kex.state.predicate.*
@@ -26,11 +26,13 @@ import org.vorpal.research.kfg.ir.Class
 import org.vorpal.research.kfg.ir.Field
 import org.vorpal.research.kfg.ir.Method
 import org.vorpal.research.kfg.ir.value.Constant
+import org.vorpal.research.kfg.ir.value.instruction.FieldLoadInst
 import org.vorpal.research.kfg.ir.value.instruction.Instruction
 import org.vorpal.research.kfg.ir.value.instruction.NewInst
 import org.vorpal.research.kfg.ir.value.instruction.ReturnInst
 import org.vorpal.research.kfg.type.NullType
 import org.vorpal.research.kthelper.assert.unreachable
+import org.vorpal.research.kthelper.collection.dequeOf
 import org.vorpal.research.kthelper.collection.queueOf
 import org.vorpal.research.kthelper.logging.log
 
@@ -227,7 +229,9 @@ class MethodAbstractlyInvocator(
             .filterValues { it.isJavaRt }
             .mapValues { it.value.rtMapped }
             .toTypeMap()
-        val result = checker.prepareAndCheck(method, clauses + query, concreteTypeInfo)
+        val preparedState = checker.prepareState(method, clauses + query, concreteTypeInfo, false)
+        log.debug("Prepared state: {}", preparedState)
+        val result = checker.check(preparedState)
         check(result is Result.SatResult) {
             "result = ${result.javaClass}"
         }
@@ -235,6 +239,13 @@ class MethodAbstractlyInvocator(
             it.value.concretize(cm, ctx.accessLevel, ctx.random)
         }
         return descriptors to checker.state
+    }
+
+    override suspend fun traverseFieldLoadInst(traverserState: TraverserState, inst: FieldLoadInst): TraverserState? {
+        if (inst.isStatic) {
+            return null // No support for static fields
+        }
+        return super.traverseFieldLoadInst(traverserState, inst)
     }
 
     override suspend fun traverseReturnInst(traverserState: TraverserState, inst: ReturnInst): TraverserState? {
