@@ -100,3 +100,190 @@ fun test() {
   generatedTerm1197.test(generatedTerm1198)
 }
 ``` 
+
+# Symbolic Graph
+
+## Usage
+
+TODO
+
+## Implementation details
+
+The implemented algorithm is from this [paper](https://taoxiease.github.io/publications/ase22-synthesis.pdf).
+For symbolic execution kex's modified `SymbolicTraverser` was used.
+
+The main algorithm is in [`GraphBuilder`](https://github.com/niyaznigmatullin/kex/blob/dev.symgraph.new.ksmt/kex-runner/src/main/kotlin/org/vorpal/research/kex/asm/analysis/symgraph2/GraphBuilder.kt).
+It tries to create all different object states by calling no more `maxL` methods and/or constructors using Symbolic Execution.
+
+## Symbolic Execution
+
+[`MethodAbstractlyInvocator`](https://github.com/niyaznigmatullin/kex/blob/dev.symgraph.new.ksmt/kex-runner/src/main/kotlin/org/vorpal/research/kex/asm/analysis/symgraph2/MethodAbstractlyInvocator.kt) finds all valid execution paths with the
+given [`AbsCall`](https://github.com/niyaznigmatullin/kex/blob/dev.symgraph.new.ksmt/kex-runner/src/main/kotlin/org/vorpal/research/kex/asm/analysis/symgraph2/AbsCall.kt) object that contains arguments as objects or abstract primitive values.
+
+### Data
+#### State
+
+As a resulting path it generates a state. A state contains:
+* objects as [`GraphVertex`](https://github.com/niyaznigmatullin/kex/blob/dev.symgraph.new.ksmt/kex-runner/src/main/kotlin/org/vorpal/research/kex/asm/analysis/symgraph2/objects/GraphVertex.kt) instances;
+* active objects, a subset of objects, as the paper suggests;
+* a [`PredicateState`]() instance that contains the predicates to bind all the primitive fields and values;
+* a set of all primitive terms used as the fields or predicate arguments.
+
+#### Primitives
+In our algorithm, we call as primitive:
+1. JVM primitives;
+2. `java.lang.Class` instances;
+3. `java.lang.String` instances;
+4. arrays of primitives defined here.
+
+The primitives are stored as kex terms. The "primitiveness" is determined according
+to the type. `null` can both be primitive and object. The primitives can be reanimated
+without unsafe calls.
+
+#### Objects
+
+Objects are those that are not primitives. Each object contains object and primitive fields.
+As a value of object field there can be:
+* either an object as a `GraphVertex` instance;
+* or a primitive as a `Term` instance.
+
+### Method call
+
+#### Initialization
+
+On method call all `GraphObject` instances are mapped to new `Term`s.
+For all pairs of these terms inequality predicate is created.
+
+All field values mapped to equality predicates. The predicate state of the state is not taken into account
+during a new method call.
+
+#### New path
+
+On return instruction a new path is found. At that point a new state is created.
+The final descriptors are reanimated. Same descriptor means the same object.
+Several terms may map to the same object, so antialiasing happen here.
+Objects of the new state are all descriptors
+that are reachable from the descriptors that correspond to the active objects.
+
+Active objects are objects were active before the method call,
+plus maybe a return object.
+
+#### Fields
+
+The fields that have object types just taken from the descriptor-object mapping.
+
+The fields that are primitive need to be calculated by resolving field stores and loads.
+For that `FieldContainer` and `ExpressionExtractor` (need to rename that) are used.
+
+`FieldContainer` contains fields, initially the terms taken from `GraphObject`.
+
+`ExpressionExtractor` creates a new `FieldContainer` with resolved field stores and
+loads, and returns a new predicate state, that have no predicates containing object-terms.
+
+#### Constructor calls
+
+On constructor call (new instruction or manual constructor call)
+field store predicates are created for all fields, storing default values.
+So that `FieldContainer` field load has something to load, and correctly loads default
+values.
+
+## Algorithm related things
+
+### For new paths found by symbolic execution
+
+A state is created by joining predicate state for parent state and a new path's
+predicate state, checking new predicate state for satisfiability.
+
+The terms for primitives are remapped on every state creation,
+so that they don't collide when comparing them.
+
+### `addState` from the algorithm
+
+Need to check for isomorphism the objects graph of two states.
+Do it using backtracking and comparing types.
+
+Also need to check if one state implies another.
+1. Isomorphism backtracking finds the term-mapping between states.
+2. A new predicate state is created replacing terms according to the mapping in one of the states.
+3. Check for implication with a small timeout. If it fails with the timeout, say there's
+no implication, still correct but more states can be created.
+
+
+## Reanimating
+
+Run a usual `SymbolicTraverser` (actually `InstructionSymbolicCheckerGraph`).
+With a difference that when the test is found, generate it in a different way.
+
+For test generation try all different mappings of object-terms to `GraphObject`
+instances of the state, do that for every state. Create terms for every `GraphObject`
+and all relations to terms using predicates (similar to initialization in Symbolic Execution).
+Run predicate state checking for satisfiability of the merged predicate states:
+1. The object representation predicate state of the state;
+2. Predicate state of the state;
+3. Predicate state of the current generated test.
+
+If it succeeds run the paper algorithm to restore the method calls and their arguments.
+
+## Features
+
+Currently supported things are:
+* `java.lang.String`;
+* `java.lang.Class` in some way;
+* arrays and multidimensional arrays of primitives.
+
+Currently not supported, but need to be:
+* static fields;
+* arrays of objects.
+
+## Ideas to be done
+
+### Get rid of `GraphObject`
+
+Currently, state's object graph is stored in a different way, and all the kex tools
+use `Term`s and `Predicate`'s restrictions to store information. It's done in a way
+it's done because after each method call, the object graph needs to be calculated to
+compare the states. But it doesn't look natural.
+To use the state something like symbolic execution initialization phase has to happen
+every time.
+
+This can also give some advantages on how to support static fields.
+
+### Which methods to call
+
+Need to create an algorithm to find out which methods to call and which not to. Some methods:
+1. just read and don't create anything, so there is no need to call them;
+2. are bad, no way to symbolically call them under the timeout restrictions;
+3. give us no new objects vs static methods as constructors, or factories.
+
+For 1 and 2 some algorithms can be created that do the experiments, for example:
+* if we called a method, and it didn't give us any path several times, that method is bad;
+* if we called a method, and the state is "the same", that method is bad.
+
+### Isomorphism during reanimation and symbolic call
+
+Currently, the algorithm tries to set every value to every argument with the supported
+type in all different ways. That's many ways to try. No idea how to make it less.
+
+### Static Fields
+
+Currently, static fields are not supported, because current reanimator cannot correctly
+reanimate objects that are stored in static fields, and were created in a static context.
+
+We had an idea to use `Object2Descriptor` and `collectQuery` of descriptor to add
+some predicates to the predicate state, that will create the object "manually".
+
+The first problem was the fields and `FieldContainer`, need to field store
+and not just equality on field load as in `collectQuery`.
+
+The second problem is that need somehow not create it twice, and recreate it on the
+initialization phase correctly.
+
+Other possible issues are that those objects can be connected to each other, and
+we can also use them as arguments for future calls.
+
+Most probably it can be done with some restrictions, by storing some more information
+in the state between the calls.
+
+### Arrays of objects
+
+No idea how to do.
