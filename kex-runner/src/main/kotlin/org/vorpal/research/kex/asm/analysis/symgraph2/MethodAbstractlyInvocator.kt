@@ -32,7 +32,6 @@ import org.vorpal.research.kfg.ir.value.instruction.NewInst
 import org.vorpal.research.kfg.ir.value.instruction.ReturnInst
 import org.vorpal.research.kfg.type.NullType
 import org.vorpal.research.kthelper.assert.unreachable
-import org.vorpal.research.kthelper.collection.dequeOf
 import org.vorpal.research.kthelper.collection.queueOf
 import org.vorpal.research.kthelper.logging.log
 
@@ -162,7 +161,7 @@ class MethodAbstractlyInvocator(
             boundCheckedTerms = persistentSetOf(),
             typeCheckedTerms = initialTypeCheckedTerms
         )
-        log.debug("Running method $rootMethod: ${rootMethod.body}")
+        log.debug("Running method {}: {}", rootMethod, rootMethod.body)
         withContext(currentCoroutineContext()) {
             pathSelector += initialState to rootMethod.body.entry
 
@@ -192,7 +191,7 @@ class MethodAbstractlyInvocator(
                 obj as GraphObject
                 initializeDefaultFields(objectTerm, statePredicates)
                 nullCheckPredicates.add(path { (objectTerm eq null) equality false })
-                addFieldsTo(obj.objectFields.mapValues {
+                addFieldsTo(obj.fields.mapValues {
                     val v = it.value
                     when (v) {
                         is GraphVertex -> terms.getValue(v)
@@ -265,7 +264,12 @@ class MethodAbstractlyInvocator(
                     rootMethod,
                     traverserState.symbolicState,
                 )
-                log.debug("Add new path: descriptors = $objectDescriptors, predicateState = $fullPredicateState, absCall = ${contextAbsCall}")
+                log.debug(
+                    "Add new path: descriptors = {}, predicateState = {}, absCall = {}",
+                    objectDescriptors,
+                    fullPredicateState,
+                    contextAbsCall
+                )
                 report_(fullPredicateState, objectDescriptors, returnTerm?.let {
                     objectDescriptors[it]?.let { descriptor ->
                         if (descriptor == ConstantDescriptor.Null || !descriptor.type.isGraphObject) {
@@ -310,7 +314,7 @@ class MethodAbstractlyInvocator(
             }
         var updatedState = BoolTypeAdapter(ctx.types).transform(predicateState)
         val fieldsByRepresenter = termsOfFieldsBefore.mapOwners(mapToRepresenter)
-        log.debug("map to representer: $mapToRepresenter, fields = $fieldsByRepresenter")
+        log.debug("map to representer: {}, fields = {}", mapToRepresenter, fieldsByRepresenter)
         val fields = extractValues(fieldsByRepresenter, mapToRepresenter, updatedState).let { (fields, state) ->
             updatedState = state
             fields
@@ -362,7 +366,7 @@ class MethodAbstractlyInvocator(
         fields: FieldContainer,
         representer: Term
     ) {
-        obj.objectFields = buildMap {
+        obj.fields = buildMap {
             for ((field, descriptorTo) in descriptor.fields) {
                 val fieldName = field.first
                 if (descriptorTo == ConstantDescriptor.Null || descriptorTo.type.isGraphObject) {

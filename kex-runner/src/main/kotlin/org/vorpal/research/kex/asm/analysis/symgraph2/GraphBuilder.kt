@@ -24,14 +24,23 @@ import org.vorpal.research.kfg.type.TypeFactory
 import org.vorpal.research.kthelper.assert.unreachable
 import kotlin.system.measureTimeMillis
 import org.vorpal.research.kthelper.logging.log
+import kotlin.math.roundToLong
 import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.seconds
 
 class GraphBuilder(val ctx: ExecutionContext, klasses: Set<Class>) : TermBuilder {
     private val publicMethods = klasses.flatMap { it.allMethods }.filter {
         it.isPublic && !it.isNative && (!it.isStatic || it.returnType.kexType is KexClass) && !it.isAbstract
     }
+
+    companion object {
+        private val implicationTimeout =
+            (kexConfig.getDoubleValue("symgraph", "implicationTimeout", 0.5) * 1000).roundToLong()
+        private val fullPredicateCheckTimeout = kexConfig.getIntValue("symgraph", "fullPredicateCheckTimeout", 10)
+    }
+
     private val coroutineContext = newFixedThreadPoolContextWithMDC(
-        kexConfig.getIntValue("symbolic", "numberOfExecutors", 8),
+        kexConfig.getIntValue("symgraph", "numberOfExecutors", 8),
         "abstract-caller"
     )
     private var calls = 0
@@ -82,13 +91,13 @@ class GraphBuilder(val ctx: ExecutionContext, klasses: Set<Class>) : TermBuilder
     private suspend fun buildNewStateOrNull(state: HeapState, c: AbsCall, p: CallResult): HeapState? {
         val predicateState = state.predicateState + p.predicateState
         val result = try {
-            withTimeout(10000) {
+            withTimeout(fullPredicateCheckTimeout.seconds) {
                 AsyncSMTProxySolver(ctx).use {
                     it.isPathPossibleAsync(predicateState, emptyState())
                 }
             }
         } catch (_: TimeoutCancellationException) {
-            log.debug("Timeout on checking the full path's predicate for call: $c")
+            log.debug("Timeout on checking the full path's predicate for call: {}", c)
             null
         }
         if (result == null || result is Result.UnsatResult) {
@@ -98,7 +107,7 @@ class GraphBuilder(val ctx: ExecutionContext, klasses: Set<Class>) : TermBuilder
             addAll(collectTerms(predicateState) { it.isNamed })
             for (obj in p.objects) {
                 when (obj) {
-                    is GraphObject -> addAll(obj.objectFields.values.filterIsInstance<GraphPrimitive>().map { it.term }
+                    is GraphObject -> addAll(obj.fields.values.filterIsInstance<GraphPrimitive>().map { it.term }
                         .filter { it.isNamed })
                 }
             }
@@ -145,16 +154,21 @@ class GraphBuilder(val ctx: ExecutionContext, klasses: Set<Class>) : TermBuilder
             val objMap = state.checkIsomorphism(newState) ?: continue
             val fieldMapping = state.makeReverseFieldMapping(objMap)
             val mappedNewPredicateState = TermRemapper(fieldMapping).apply(newState.predicateState)
-            val result = withTimeoutOrNull(500.milliseconds) {
+            val result = withTimeoutOrNull(implicationTimeout.milliseconds) {
                 AsyncSMTProxySolver(ctx).use {
                     it.definitelyImplies(mappedNewPredicateState, state.predicateState)
                 }
             }
             if (result != null && result) {
-                log.debug("New state $newState is implied by old state $state")
+                log.debug("New state {} is implied by old state {}", newState, state)
                 return null to null
             }
-            log.debug("Checking for implication: $mappedNewPredicateState and ${state.predicateState} results in no implication $result")
+            log.debug(
+                "Checking for implication: {} and {} results in no implication {}",
+                mappedNewPredicateState,
+                state.predicateState,
+                result
+            )
             val unionState = merge(state, newState, objMap, fieldMapping, mappedNewPredicateState)
             allStates.add(newState)
             allStates.add(unionState)
@@ -231,7 +245,7 @@ class GraphBuilder(val ctx: ExecutionContext, klasses: Set<Class>) : TermBuilder
     }
 
     fun build(maxL: Int) {
-        log.debug("Building graph for methods: $publicMethods")
+        log.debug("Building graph for methods: {}", publicMethods)
         runBlocking(coroutineContext) {
             val time = measureTimeMillis {
                 var oldStates = mutableSetOf<HeapState>(EmptyHeapState)
@@ -280,7 +294,7 @@ class GraphBuilder(val ctx: ExecutionContext, klasses: Set<Class>) : TermBuilder
                 if (obj !is GraphObject) {
                     continue
                 }
-                for ((field, fieldValue) in obj.objectFields) {
+                for ((field, fieldValue) in obj.fields) {
                     when (fieldValue) {
                         is GraphPrimitive -> add(path { term.field(field).load() equality fieldValue.term })
                         is GraphVertex -> add(path {
@@ -288,9 +302,6 @@ class GraphBuilder(val ctx: ExecutionContext, klasses: Set<Class>) : TermBuilder
                         })
                     }
                 }
-//                for ((field, fieldValue) in obj.primitiveFields) {
-//                    add(path { term.field(field).load() equality fieldValue })
-//                }
             }
         }
         return HeapSymbolicState(this, predicateState + BasicState(predicates), objectTerms)

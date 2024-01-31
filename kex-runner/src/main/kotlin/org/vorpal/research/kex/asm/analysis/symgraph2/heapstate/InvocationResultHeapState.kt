@@ -40,13 +40,11 @@ class InvocationResultHeapState(
         termValues: Map<Term, Descriptor>,
         argumentGenerator: Generator,
     ): RestorationResult {
-//        log.debug("terms: $termValues and $terms")
 //        check(checkPredicateState(ctx, termValues) is Result.SatResult)
         val parentTermVals = termMappingToParent
             .filterValues { parentState.terms.contains(it) }
             .map { it.value to termValues.getValue(it.key) }
             .toMap()
-//        log.debug("parent terms: $parentTermVals")
         val oldResult = parentState.restoreCalls(ctx, parentTermVals, argumentGenerator)
         val oldObjActions = oldResult.objectGenerators
         val methodCall = generateMethodCallSequence(termValues, argumentGenerator, oldObjActions, "v${hashCode()}")
@@ -81,7 +79,7 @@ class InvocationResultHeapState(
                     oldObjActions.getValue(arg.obj)
                 }
 
-                else -> unreachable { log.debug("Descriptor is not primitive or object: $arg") }
+                else -> unreachable { log.debug("Descriptor is not primitive or object: {}", arg) }
             }
         }
         val methodCall = when {

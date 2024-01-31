@@ -52,8 +52,9 @@ class InstructionSymbolicCheckerGraph(
         @ExperimentalTime
         @DelicateCoroutinesApi
         fun run(context: ExecutionContext, targets: Set<Method>) {
-            val executors = kexConfig.getIntValue("symbolic", "numberOfExecutors", 8)
-            val timeLimit = kexConfig.getIntValue("symbolic", "timeLimit", 100)
+            val executors = kexConfig.getIntValue("symgraph", "numberOfExecutors", 8)
+            val timeLimit = kexConfig.getIntValue("symgraph", "timeLimit", 100)
+            val depth = kexConfig.getIntValue("symgraph", "depth", 4)
 
             val actualNumberOfExecutors = maxOf(1, minOf(executors, targets.size))
             val coroutineContext = newFixedThreadPoolContextWithMDC(actualNumberOfExecutors, "symbolic-dispatcher")
@@ -62,16 +63,11 @@ class InstructionSymbolicCheckerGraph(
                     add(method.klass)
                     addAll(method.argTypes.filterIsInstance<ClassType>().map { it.klass }
                         .filter { it.pkg.canonicalName == method.klass.pkg.canonicalName })
-//                    addAll(context.cm.getAllSubtypesOf(method.klass))
-//                    addAll(method.argTypes.flatMap {
-//                        when (it) {
-//                            is ClassType -> context.cm.getAllSubtypesOf(it.klass)
-//                            else -> emptyList()
-//                        }
-//                    })
+                    // only classes from the same package are taken so that there are not that much
+                    // TODO think about how to make it better
                 }
             }.toSet())
-            graphBuilder.build(4)
+            graphBuilder.build(depth)
             log.debug("After building the graph")
             runBlocking(coroutineContext) {
                 log.debug("Running second phase with timeout = ${timeLimit.seconds}s")
@@ -140,11 +136,12 @@ class InstructionSymbolicCheckerGraph(
                 }
                 val mappedSymbolicState = graphState.predicateState + BasicState(predicates) + currentPredicateState
                 log.debug(
-                    "Exc/Return Instruction check state for method: $rootMethod: $mappedSymbolicState with graph state ${
-                        graphState.heapState.toString(
-                            emptyMap()
-                        )
-                    }"
+                    "Exc/Return Instruction check state for method: {}: {} with graph state {}",
+                    rootMethod,
+                    mappedSymbolicState,
+                    graphState.heapState.toString(
+                        emptyMap()
+                    )
                 )
                 val checker = AsyncChecker(rootMethod, ctx)
                 val result = checker.prepareAndCheck(rootMethod, mappedSymbolicState)
@@ -152,11 +149,14 @@ class InstructionSymbolicCheckerGraph(
                 check(result.known)
                 if (result is Result.SatResult) {
                     log.debug(
-                        "Exc/Return Instruction add for method: $rootMethod: $mappedSymbolicState, changedState = $changedState with result $result with graph state ${
-                            graphState.heapState.toString(
-                                emptyMap()
-                            )
-                        }"
+                        "Exc/Return Instruction add for method: {}: {}, changedState = {} with result {} with graph state {}",
+                        rootMethod,
+                        mappedSymbolicState,
+                        changedState,
+                        result,
+                        graphState.heapState.toString(
+                            emptyMap()
+                        )
                     )
                     val generator = DescriptorGenerator(
                         rootMethod,
@@ -178,8 +178,6 @@ class InstructionSymbolicCheckerGraph(
                         }
                     }
                     val parameters = Parameters(thisParameter, argParameter)
-//                    val termValues = generator.memory
-//                        .filterKeys { !it.type.isGraphObject }
                     val termValues = buildMap {
                         for (term in graphState.heapState.terms) {
                             val descriptor = generator.reanimateTerm(term)
@@ -207,11 +205,13 @@ class InstructionSymbolicCheckerGraph(
                     return GraphTestCase(parameters, graphState.heapState, termValues, descriptors)
                 } else {
                     log.debug(
-                        "Exc/Return Instruction can't see for method: $rootMethod: $mappedSymbolicState, changedState = $changedState with graph state ${
-                            graphState.heapState.toString(
-                                emptyMap()
-                            )
-                        }"
+                        "Exc/Return Instruction can't see for method: {}: {}, changedState = {} with graph state {}",
+                        rootMethod,
+                        mappedSymbolicState,
+                        changedState,
+                        graphState.heapState.toString(
+                            emptyMap()
+                        )
                     )
                 }
             }
@@ -238,7 +238,7 @@ class InstructionSymbolicCheckerGraph(
         val stackTraceElement = stackTrace.lastOrNull()
         val receiver = stackTraceElement?.instruction
         return if (receiver == null) {
-            log.debug("Return Instruction for method: $rootMethod")
+            log.debug("Return Instruction for method: {}", rootMethod)
             val result = findParameters(traverserState)
             if (result != null) {
                 createTestGenerationTask(result, "sh")

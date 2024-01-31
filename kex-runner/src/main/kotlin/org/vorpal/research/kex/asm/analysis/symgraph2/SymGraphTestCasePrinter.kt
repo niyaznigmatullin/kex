@@ -15,7 +15,6 @@ class SymGraphTestCasePrinter(
     val klassName: String
 ) : TestCasePrinter(ctx, packageName) {
     private val testDirectory = kexConfig.testcaseDirectory
-//    val fullKlassName = "${packageName.javaString}.$klassName"
     override val printer = SymGraphAS2JavaPrinter(ctx, packageName.replace("/", "."), klassName)
     override fun print(testName: String, method: Method, actionSequences: Parameters<ActionSequence>) {
         TODO("Not yet implemented")

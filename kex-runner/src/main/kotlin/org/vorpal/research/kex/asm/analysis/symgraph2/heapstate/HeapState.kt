@@ -36,31 +36,6 @@ abstract class HeapState(
         Pair(v, id)
     }
 
-    fun getObjectIndex(obj: GraphVertex) = stateToIndex.getValue(obj)
-
-    class PermutationGenerator(n: Int) {
-        val p = IntArray(n) { it }
-
-        fun nextPermutation(): Boolean {
-            var i = p.size - 1
-            while (i > 0 && p[i] < p[i - 1]) {
-                i--
-            }
-            if (i == 0) {
-                return false
-            }
-            // p[i] > p[i - 1]
-            p.reverse(i, p.size)
-            i--
-            var j = i + 1
-            while (p[j] < p[i]) j++
-            val t = p[i];
-            p[i] = p[j]
-            p[j] = t
-            return true
-        }
-    }
-
     fun checkIsomorphism(other: HeapState): Map<GraphVertex, GraphVertex>? {
         if (objects.size != other.objects.size || activeObjects.size != other.activeObjects.size) {
             return null
@@ -71,28 +46,7 @@ abstract class HeapState(
             activeObjects.toSet(),
             other.activeObjects.toSet()
         )
-//        if (result) {
-//            println("this two are equal ===============")
-//            println(GraphBuilder.stateToString(this.hashCode(), this))
-//            println(GraphBuilder.stateToString(other.hashCode(), other))
-//            println("==================")
-//        }
         return result
-//        val a = objects.toList()
-//        val b = other.objects.toList()
-//        if (a.size != b.size || activeObjects.size != other.activeObjects.size) {
-//            return false
-//        }
-//        val indexA = a.map { it.descriptor }.withIndex().associate { (i, x) -> Pair(x, i) }
-//        val indexB = b.map { it.descriptor }.withIndex().associate { (i, x) -> Pair(x, i) }
-//
-//        val permutations = PermutationGenerator(a.size)
-//        do {
-//            if (checkMapping(a, b, other, indexA, indexB, permutations.p)) {
-//                return true
-//            }
-//        } while (permutations.nextPermutation())
-//        return false
     }
 
     private fun checkIsomorphismImpl(
@@ -138,12 +92,12 @@ abstract class HeapState(
         when (obj) {
             is GraphObject -> {
                 mapTo as GraphObject
-                val mappedObjFields = obj.objectFields
+                val mappedObjFields = obj.fields
                     .filterValues { it is GraphVertex }
                     .mapValues { it.value as GraphVertex }
                 for ((field, value) in mappedObjFields) {
                     val otherValue =
-                        mapTo.objectFields.getOrDefault(field, GraphValue.Null) as? GraphVertex ?: return false
+                        mapTo.fields.getOrDefault(field, GraphValue.Null) as? GraphVertex ?: return false
                     val map1 = mapping[value]
                     val map2 = reverseMapping[otherValue]
                     if (map1 == null && map2 == null) {
@@ -167,39 +121,6 @@ abstract class HeapState(
         return true
     }
 
-//    private fun checkMapping(
-//        a: List<GraphVertex>,
-//        b: List<GraphVertex>,
-//        other: HeapState,
-//        indexA: Map<GraphVertex, Int>,
-//        indexB: Map<GraphVertex, Int>,
-//        p: IntArray
-//    ): Boolean {
-//        for ((i, x) in a.withIndex()) {
-//            val y = b[p[i]]
-//            if (x.type != y.type) {
-//                return false
-//            }
-//            if ((x in activeObjects) != (y in other.activeObjects)) {
-//                return false
-//            }
-//            if (x.type !is KexClass) {
-//                continue
-//            }
-//            when (x) {
-//                is GraphObject -> {
-//                    y as GraphObject
-//                    for ((field, value) in x.objectFields) {
-//                        if (p[indexA.getValue(value)] != indexB[y.objectFields[field]]) {
-//                            return false
-//                        }
-//                    }
-//                }
-//            }
-//        }
-//        return true
-//    }
-
     private fun objectGraphToString() = buildString {
         appendLine("Nodes = ${objects.size}, active = ${activeObjects.size}")
         for (d in objects) {
@@ -208,7 +129,7 @@ abstract class HeapState(
             }
             when (d) {
                 is GraphObject -> {
-                    for ((field, value) in d.objectFields.filterValues { it is GraphVertex }) {
+                    for ((field, value) in d.fields.filterValues { it is GraphVertex }) {
                         val from = stateToIndex.getValue(d)
                         val to = stateToIndex.getValue(value as GraphVertex)
                         appendLine("$from.${field.first} -> $to")
@@ -220,10 +141,10 @@ abstract class HeapState(
             val objName = stateToIndex.getValue(obj) + "<$obj>"
             val objFields = when (obj) {
                 is GraphObject -> {
-                    obj.objectFields.filterValues { it is GraphPrimitive }.map { (field, value) ->
+                    obj.fields.filterValues { it is GraphPrimitive }.map { (field, value) ->
                         value as GraphPrimitive
                         ".${field.first} = ${value.term}"
-                    }.joinToString(", ") + ", " + obj.objectFields.filterValues { it is GraphVertex }
+                    }.joinToString(", ") + ", " + obj.fields.filterValues { it is GraphVertex }
                         .map { (field, value) ->
                             value as GraphVertex
                             ".${field.first} = ${stateToIndex.getValue(value)}"
@@ -280,7 +201,7 @@ abstract class HeapState(
         val rootSequence: List<ActionSequence>
     )
 
-    suspend fun reanimateAllTerms(
+    private suspend fun reanimateAllTerms(
         ctx: ExecutionContext,
         someTermValues: Map<Term, Descriptor>,
     ): Map<Term, Descriptor>? {
@@ -297,13 +218,9 @@ abstract class HeapState(
         for (obj1 in objects) {
             if (obj1 is GraphObject) {
                 val obj2 = mapping.getValue(obj1) as GraphObject
-//                for ((field, term2) in obj2.primitiveFields) {
-//                    val term1 = obj1.primitiveFields[field] ?: continue
-//                    put(term2, term1)
-//                }
-                for ((field, term2) in obj2.objectFields) {
+                for ((field, term2) in obj2.fields) {
                     if (term2 is GraphPrimitive) {
-                        val term1 = obj1.objectFields[field] ?: continue
+                        val term1 = obj1.fields[field] ?: continue
                         term1 as GraphPrimitive
                         put(term2.term, term1.term)
                     }
